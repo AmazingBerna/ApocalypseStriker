@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apocalypsestriker"
+version = "3.0"
+description = "ApocalypseStriker - VAPT (Vulnerability Assessment + Penetration Testing) di applicazioni web"
+requires-python = ">=3.9"
+# Il Vulnerability Assessment web usa solo la libreria standard: nessuna dipendenza esterna.
+dependencies = []
+
+[project.scripts]
+# Il comando `apocalypse` -> apocalypsescan_app/cli.py:main
+# (sottocomando "attack": "apocalypse attack" apre il menù, "apocalypse attack <url>" scansiona)
+apocalypse = "apocalypsescan_app.cli:main"
+
+[tool.setuptools.packages.find]
+# Installa solo il pacchetto e i suoi sottopacchetti; i moduli sciolti nella radice
+# (main.py, drago_braille.py) restano fuori: in sviluppo (pip install -e .) il codice
+# resta comunque qui e viene usato dal suo posto.
+include = ["apocalypsescan_app*"]

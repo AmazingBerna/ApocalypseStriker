@@ -1,0 +1,2 @@
+[console_scripts]
+apocalypse = apocalypsescan_app.cli:main

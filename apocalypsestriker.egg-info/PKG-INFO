@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: apocalypsestriker
+Version: 3.0
+Summary: ApocalypseStriker - VAPT (Vulnerability Assessment + Penetration Testing) di applicazioni web
+Requires-Python: >=3.9

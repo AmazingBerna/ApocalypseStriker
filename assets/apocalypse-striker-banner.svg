@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="874" height="272" viewBox="0 0 874 272" role="img" aria-label="APOCALYPSE STRIKER - VAPT di applicazioni web">
+  <title>APOCALYPSE STRIKER</title>
+  <defs>
+    <!-- La fiamma di ApocalypseStriker: palette FUCSIA di banner.py (231,225,219,213,207,201) -->
+    <linearGradient id="fiamma" gradientUnits="userSpaceOnUse" x1="0" y1="36" x2="0" y2="126">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.2" stop-color="#ffd7ff"/>
+      <stop offset="0.4" stop-color="#ffafff"/>
+      <stop offset="0.6" stop-color="#ff87ff"/>
+      <stop offset="0.8" stop-color="#ff5fff"/>
+      <stop offset="1" stop-color="#ff00ff"/>
+    </linearGradient>
+    <filter id="bagliore" x="-5%" y="-20%" width="110%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="sfocato"/>
+      <feMerge><feMergeNode in="sfocato"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <g id="lettere">
+    <rect x="50" y="36" width="50" height="18"/>
+    <rect x="120" y="36" width="60" height="18"/>
+    <rect x="210" y="36" width="60" height="18"/>
+    <rect x="300" y="36" width="60" height="18"/>
+    <rect x="380" y="36" width="50" height="18"/>
+    <rect x="450" y="36" width="20" height="18"/>
+    <rect x="500" y="36" width="20" height="18"/>
+    <rect x="560" y="36" width="20" height="18"/>
+    <rect x="590" y="36" width="60" height="18"/>
+    <rect x="670" y="36" width="70" height="18"/>
+    <rect x="750" y="36" width="70" height="18"/>
+    <rect x="40" y="54" width="20" height="18"/>
+    <rect x="90" y="54" width="20" height="18"/>
+    <rect x="120" y="54" width="20" height="18"/>
+    <rect x="170" y="54" width="20" height="18"/>
+    <rect x="200" y="54" width="20" height="18"/>
+    <rect x="260" y="54" width="20" height="18"/>
+    <rect x="290" y="54" width="20" height="18"/>
+    <rect x="370" y="54" width="20" height="18"/>
+    <rect x="420" y="54" width="20" height="18"/>
+    <rect x="450" y="54" width="20" height="18"/>
+    <rect x="510" y="54" width="20" height="18"/>
+    <rect x="550" y="54" width="20" height="18"/>
+    <rect x="590" y="54" width="20" height="18"/>
+    <rect x="640" y="54" width="20" height="18"/>
+    <rect x="670" y="54" width="20" height="18"/>
+    <rect x="750" y="54" width="20" height="18"/>
+    <rect x="40" y="72" width="70" height="18"/>
+    <rect x="120" y="72" width="60" height="18"/>
+    <rect x="200" y="72" width="20" height="18"/>
+    <rect x="260" y="72" width="20" height="18"/>
+    <rect x="290" y="72" width="20" height="18"/>
+    <rect x="370" y="72" width="70" height="18"/>
+    <rect x="450" y="72" width="20" height="18"/>
+    <rect x="520" y="72" width="40" height="18"/>
+    <rect x="590" y="72" width="60" height="18"/>
+    <rect x="670" y="72" width="70" height="18"/>
+    <rect x="750" y="72" width="50" height="18"/>
+    <rect x="40" y="90" width="20" height="18"/>
+    <rect x="90" y="90" width="20" height="18"/>
+    <rect x="120" y="90" width="20" height="18"/>
+    <rect x="200" y="90" width="20" height="18"/>
+    <rect x="260" y="90" width="20" height="18"/>
+    <rect x="290" y="90" width="20" height="18"/>
+    <rect x="370" y="90" width="20" height="18"/>
+    <rect x="420" y="90" width="20" height="18"/>
+    <rect x="450" y="90" width="20" height="18"/>
+    <rect x="530" y="90" width="20" height="18"/>
+    <rect x="590" y="90" width="20" height="18"/>
+    <rect x="720" y="90" width="20" height="18"/>
+    <rect x="750" y="90" width="20" height="18"/>
+    <rect x="40" y="108" width="20" height="18"/>
+    <rect x="90" y="108" width="20" height="18"/>
+    <rect x="120" y="108" width="20" height="18"/>
+    <rect x="210" y="108" width="60" height="18"/>
+    <rect x="300" y="108" width="60" height="18"/>
+    <rect x="370" y="108" width="20" height="18"/>
+    <rect x="420" y="108" width="20" height="18"/>
+    <rect x="450" y="108" width="70" height="18"/>
+    <rect x="530" y="108" width="20" height="18"/>
+    <rect x="590" y="108" width="20" height="18"/>
+    <rect x="670" y="108" width="70" height="18"/>
+    <rect x="750" y="108" width="70" height="18"/>
+    </g>
+    <g id="sottotitolo">
+    <rect x="0" y="36" width="60" height="18"/>
+    <rect x="0" y="54" width="10" height="18"/>
+    <rect x="0" y="72" width="60" height="18"/>
+    <rect x="40" y="90" width="20" height="18"/>
+    <rect x="0" y="108" width="60" height="18"/>
+    <rect x="80" y="36" width="60" height="18"/>
+    <rect x="100" y="54" width="20" height="18"/>
+    <rect x="100" y="72" width="20" height="18"/>
+    <rect x="100" y="90" width="20" height="18"/>
+    <rect x="100" y="108" width="20" height="18"/>
+    <rect x="160" y="36" width="50" height="18"/>
+    <rect x="160" y="54" width="10" height="18"/>
+    <rect x="200" y="54" width="20" height="18"/>
+    <rect x="160" y="72" width="50" height="18"/>
+    <rect x="160" y="90" width="10" height="18"/>
+    <rect x="190" y="90" width="20" height="18"/>
+    <rect x="160" y="108" width="10" height="18"/>
+    <rect x="210" y="108" width="20" height="18"/>
+    <rect x="250" y="36" width="50" height="18"/>
+    <rect x="270" y="54" width="20" height="18"/>
+    <rect x="270" y="72" width="20" height="18"/>
+    <rect x="270" y="90" width="20" height="18"/>
+    <rect x="250" y="108" width="50" height="18"/>
+    <rect x="320" y="36" width="20" height="18"/>
+    <rect x="370" y="36" width="20" height="18"/>
+    <rect x="320" y="54" width="20" height="18"/>
+    <rect x="360" y="54" width="20" height="18"/>
+    <rect x="320" y="72" width="50" height="18"/>
+    <rect x="320" y="90" width="20" height="18"/>
+    <rect x="360" y="90" width="20" height="18"/>
+    <rect x="320" y="108" width="20" height="18"/>
+    <rect x="370" y="108" width="20" height="18"/>
+    <rect x="410" y="36" width="60" height="18"/>
+    <rect x="410" y="54" width="10" height="18"/>
+    <rect x="410" y="72" width="40" height="18"/>
+    <rect x="410" y="90" width="10" height="18"/>
+    <rect x="410" y="108" width="60" height="18"/>
+    <rect x="490" y="36" width="50" height="18"/>
+    <rect x="490" y="54" width="10" height="18"/>
+    <rect x="530" y="54" width="20" height="18"/>
+    <rect x="490" y="72" width="50" height="18"/>
+    <rect x="490" y="90" width="10" height="18"/>
+    <rect x="520" y="90" width="20" height="18"/>
+    <rect x="490" y="108" width="10" height="18"/>
+    <rect x="540" y="108" width="20" height="18"/>
+    </g>
+  </defs>
+  <rect width="874" height="272" rx="12" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="872" height="270" rx="11" fill="none" stroke="#87005f" stroke-width="2"/>
+  <use href="#lettere" x="4" y="4" fill="#2a0022"/>
+  <use href="#lettere" fill="url(#fiamma)" filter="url(#bagliore)"/>
+  <g transform="translate(319.4 142) scale(0.42)">
+    <use href="#sottotitolo" x="4" y="4" fill="#2a0022"/>
+    <use href="#sottotitolo" fill="url(#fiamma)" filter="url(#bagliore)"/>
+  </g>
+  <text x="437" y="232" text-anchor="middle" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#d0d0d0">VAPT di applicazioni web — Vulnerability Assessment + Penetration Testing</text>
+  <text x="437" y="256" text-anchor="middle" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#ff87ff">Rischio = Impatto × Probabilità</text>
+</svg>
