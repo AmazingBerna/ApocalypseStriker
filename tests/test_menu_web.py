@@ -119,3 +119,80 @@ def test_comando_web_interpreta():
     assert mostrato.endswith("--output x --interpreta")
     argv, _ = menu_web.comando_web("https://esempio.it/", "test", True, ["md"])
     assert "--interpreta" not in argv
+
+
+# --------------------------------------------------------------------------
+# Formati: HTML selezionabile, JSON sempre salvato dalla scansione guidata
+# --------------------------------------------------------------------------
+
+def _formato(argv):
+    return argv[argv.index("--format") + 1]
+
+
+def test_formati_html_e_json_sempre(monkeypatch):
+    # formati lasciati al default (Markdown + HTML): il JSON si aggiunge da solo
+    lanciati = _simula(monkeypatch, ["https://esempio.it", "", "", "n", "", "", "n", "s", ""])
+    menu_web.esegui_scansione()
+    assert _formato(lanciati[0]) == "md,html,json"
+
+
+@pytest.mark.parametrize("scelta, attesi", [("1", "md,json"), ("2", "html,json"),
+                                            ("3", "md,html,json"), ("4", "md,html,csv,json")])
+def test_ogni_preset_dei_formati(monkeypatch, scelta, attesi):
+    lanciati = _simula(monkeypatch, ["https://esempio.it", "", "", "n", scelta, "", "n", "s", ""])
+    menu_web.esegui_scansione()
+    assert _formato(lanciati[0]) == attesi
+
+
+def test_formati_scansione_non_duplica_json():
+    assert menu_web.formati_scansione(["md", "json"]) == ["md", "json"]
+    assert menu_web.formati_scansione(["html"]) == ["html", "json"]
+
+
+# --------------------------------------------------------------------------
+# Voce "Interpreta report"
+# --------------------------------------------------------------------------
+
+def test_voce_interpreta_report_nel_menu():
+    voce = next(v for v in menu_web.VOCI if v.etichetta == "Interpreta report")
+    assert voce.azione is menu_web.interpreta_report
+
+
+@pytest.fixture
+def reports_temporanei(tmp_path, monkeypatch):
+    from apocalypsescan_app import percorsi
+    cartella = tmp_path / "reports"
+    monkeypatch.setattr(percorsi, "REPORTS", cartella)
+    return cartella
+
+
+def _salva_json(cartella, nome, testo):
+    (cartella / "json").mkdir(parents=True, exist_ok=True)
+    percorso = cartella / "json" / f"{nome}.json"
+    percorso.write_text(testo, encoding="utf-8", newline="\n")
+    return percorso
+
+
+def test_interpreta_report_senza_report(reports_temporanei, monkeypatch, capsys):
+    _simula(monkeypatch, [""])            # solo la pausa
+    menu_web.interpreta_report()
+    assert "Nessun report JSON" in capsys.readouterr().out
+
+
+def test_interpreta_report_genera_spiegazione(reports_temporanei, monkeypatch, capsys):
+    from apocalypsescan_app.renderers import json_out
+    from esempi import _modello
+    _salva_json(reports_temporanei, "audit_cliente", json_out.render(_modello()))
+    _simula(monkeypatch, ["1", ""])       # primo report, pausa
+    menu_web.interpreta_report()
+    uscita = capsys.readouterr().out
+    assert "audit_cliente" in uscita and "COSA SIGNIFICA" in uscita
+    assert (reports_temporanei / "md" / "audit_cliente_interpretazione.md").is_file()
+
+
+def test_interpreta_report_json_non_valido(reports_temporanei, monkeypatch, capsys):
+    _salva_json(reports_temporanei, "rotto", "{non è json")
+    _simula(monkeypatch, ["1", ""])
+    menu_web.interpreta_report()
+    assert "non è un report web" in capsys.readouterr().out
+    assert not (reports_temporanei / "md" / "rotto_interpretazione.md").exists()

@@ -151,13 +151,18 @@ apre un menù testuale a colori (fucsia) con il banner e le voci:
 | Come funziona | cos'è un VAPT, le due fasi, il punteggio impatto × probabilità |
 | Prima di iniziare | autorizzazione e bersagli di prova |
 | Vulnerability Assessment | la scansione passiva: cosa controlla |
-| Penetration Testing | la scansione attiva (ZAP) e il doppio consenso |
+| Penetration Testing | la scansione attiva e il doppio consenso |
 | Opzioni e report | i flag disponibili, i formati, il nome del report e la spiegazione guidata |
 | **Esegui una scansione** | scansione guidata su un URL, con spiegazione dei risultati (vedi sotto) |
+| **Interpreta report** | sceglie un report salvato e ne mostra la spiegazione guidata (vedi sotto) |
 
 Si sceglie una voce digitandone il numero e premendo `Invio`; `0` (o `Ctrl+C`) esce.
 
-La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD**, in quali **formati** salvare il report e il **nome del report** (proposto `web_<data-ora>`; solo lettere, cifre, `_` e `-`, senza cartelle né estensione: diventa `--output NOME`) e se vuoi anche la **spiegazione guidata** dei risultati (`--interpreta`, proposta di default). Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione.
+La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD**, in quali **formati** salvare il report (Markdown, HTML o entrambi, eventualmente con il CSV; proposto Markdown + HTML) e il **nome del report** (proposto `web_<data-ora>`; solo lettere, cifre, `_` e `-`, senza cartelle né estensione: diventa `--output NOME`) e se vuoi anche la **spiegazione guidata** dei risultati (`--interpreta`, proposta di default). Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione. Il penetration testing attivo si sceglie qui, al passo *Tipo di analisi*: non serve lanciarlo a parte.
+
+La scansione guidata salva **sempre anche il JSON** (`reports/json/NOME.json`), qualunque formato tu scelga: è il modello completo della scansione, quello che la voce **Interpreta report** rilegge.
+
+La voce **Interpreta report** elenca i report in `reports/json/` (dal più recente, con URL, data e se c'era il pentest); scelto un report, ne stampa a terminale la spiegazione guidata (verdetto, priorità e, per ogni finding, cosa significa, come viene attaccato e cosa fare) e la salva, o la aggiorna, in `reports/md/<nome>_interpretazione.md`. Funziona anche per le scansioni fatte senza `--interpreta`.
 
 I colori seguono la palette fucsia del drago e si disattivano da soli quando l'output non è un terminale o è impostata la variabile `NO_COLOR`. Senza il comando `apocalypse`, il menù si apre con `python -m apocalypsescan_app.menu_web`.
 
@@ -230,7 +235,7 @@ Il report **HTML** ha lo stesso contenuto del Markdown, impaginato per il browse
 
 ### 5.3. Spiegazione guidata: `--interpreta`
 
-Con `--interpreta` (o rispondendo sì nella scansione guidata) dopo i report viene generata anche una **lettura in linguaggio semplice** dei risultati, dal modello già in memoria. Viene salvata con lo stesso nome del report, `reports/md/<nome>_interpretazione.md`, e la parte essenziale viene stampata a terminale.
+Con `--interpreta` (o rispondendo sì nella scansione guidata) dopo i report viene generata anche una **lettura in linguaggio semplice** dei risultati, dal modello già in memoria. Viene salvata con lo stesso nome del report, `reports/md/<nome>_interpretazione.md`, inclusa nel report HTML (se richiesto) e la parte essenziale viene stampata a terminale. Per una scansione già salvata si usa la voce **Interpreta report** del menù.
 
 ```bash
 apocalypse attack https://esempio.it --pentest --output audit_cliente --interpreta

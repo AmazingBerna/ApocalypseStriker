@@ -18,6 +18,7 @@ oppure:
     python -m apocalypsescan_app.menu_web
 """
 
+import json
 import re
 import shlex
 import subprocess
@@ -27,7 +28,9 @@ from typing import NamedTuple
 
 from apocalypsescan_app import __version__
 from apocalypsescan_app import menu_stile as st
+from apocalypsescan_app import percorsi
 from apocalypsescan_app.config import WEB_AMBIENTI
+from apocalypsescan_app.web import interprete_web
 from apocalypsescan_app.web.recon import normalizza_url
 
 # Scorciatoie ai primitivi di stile (sempre fucsia): stesso aspetto delle versioni precedenti.
@@ -83,7 +86,7 @@ la probabilità tiene conto di quanto è esposto e, per le CVE, dei dati CISA KE
 Alla fine ottieni un report con i finding ordinati per rischio, l'autorizzazione
 registrata e le tecnologie riconosciute. A richiesta (--interpreta) anche una
 spiegazione guidata: per ogni finding cosa significa, come viene attaccato e cosa
-fare, ricavata da regole fisse e offline. Vedi le voci 5 ed 6.
+fare, ricavata da regole fisse e offline. Vedi le voci 5, 6 e 7.
 """
 
 PRIMA_DI_INIZIARE = """\
@@ -186,18 +189,19 @@ OPZIONI = """\
 
 # Formati e dove finiscono i report
 
---format md,json,csv   Markdown (leggibile), JSON (il modello completo), CSV (i
-                       finding in tabella). Default: md.
+--format md,html,json,csv  Markdown (leggibile), HTML (da aprire nel browser),
+                           JSON (il modello completo), CSV (i finding in
+                           tabella). Default: md.
 
 I report finiscono nella cartella del progetto, una sottocartella per formato:
 
-  reports/md/    reports/json/    reports/csv/
+  reports/md/    reports/html/    reports/json/    reports/csv/
 
 Con --interpreta si aggiunge reports/md/NOME_interpretazione.md, con lo stesso
-nome del report.
+nome del report, e il report HTML include la sezione "Spiegazione guidata".
 
-! Il report HTML del web non è ancora disponibile (arriverà con html_web):
-! per ora i formati web sono md, json e csv.
+La scansione guidata (voce 6) salva sempre anche il JSON: è il modello che la
+voce 7 (Interpreta report) rilegge per spiegare i risultati in un secondo momento.
 """
 
 
@@ -205,12 +209,22 @@ nome del report.
 # Esegui una scansione (voce operativa): costruisce ed esegue "apocalypse attack ..."
 # --------------------------------------------------------------------------
 
-# Combinazioni di formati offerte nella scansione guidata (solo quelli web)
+# Combinazioni di formati offerte nella scansione guidata (solo quelli web). Il JSON non
+# compare: la scansione guidata lo salva sempre (FORMATO_SEMPRE), perché è il modello che
+# la voce "Interpreta report" rilegge.
 FORMATI_PRESET = (
     (["md"], "solo Markdown (leggibile)"),
-    (["md", "json"], "Markdown + JSON (il modello completo)"),
-    (["md", "json", "csv"], "Markdown + JSON + CSV (finding in tabella)"),
+    (["html"], "solo HTML (da aprire nel browser)"),
+    (["md", "html"], "Markdown + HTML"),
+    (["md", "html", "csv"], "Markdown + HTML + CSV (finding in tabella)"),
 )
+FORMATI_PRESET_DEFAULT = 2      # Markdown + HTML
+FORMATO_SEMPRE = "json"
+
+
+def formati_scansione(scelti):
+    """I formati scelti più il JSON, che la scansione guidata salva sempre."""
+    return list(scelti) + ([] if FORMATO_SEMPRE in scelti else [FORMATO_SEMPRE])
 
 
 def nome_report_predefinito():
@@ -297,20 +311,23 @@ def esegui_scansione():
 
     passo("Formati del report")
     mostra_opzioni(("--format FORMATI", "in quali formati salvare il report"))
-    formati = FORMATI_PRESET[chiedi_scelta(
+    print(c("Il JSON (il modello completo) viene salvato sempre: serve alla voce", GRIGIO))
+    print(c('"Interpreta report" per rileggere e spiegare i risultati in seguito.', GRIGIO))
+    formati = formati_scansione(FORMATI_PRESET[chiedi_scelta(
         "In quali formati vuoi il report?",
-        [(", ".join(f), d) for f, d in FORMATI_PRESET])][0]
+        [(", ".join(f), d) for f, d in FORMATI_PRESET], default=FORMATI_PRESET_DEFAULT)][0])
 
     passo("Nome del report")
     mostra_opzioni(("--output NOME", "il nome dei file del report, senza estensione"))
-    print(c("Ogni formato finisce nella sua cartella: reports/md/NOME.md, reports/json/NOME.json...", GRIGIO))
+    print(c("Ogni formato finisce nella sua cartella: reports/md/NOME.md, reports/html/NOME.html...", GRIGIO))
     nome = chiedi("Come vuoi chiamare il report?", default=nome_report_predefinito(),
                   valida=valida_nome_report)
 
     passo("Spiegazione guidata")
     mostra_opzioni(("--interpreta", "spiega i risultati in linguaggio semplice"))
     print(c("Per ogni finding: cosa significa, come viene attaccato e cosa fare. Regole fisse,", GRIGIO))
-    print(c(f"offline; salvata in reports/md/{nome}_interpretazione.md e mostrata a fine scansione.", GRIGIO))
+    print(c(f"offline; salvata in reports/md/{nome}_interpretazione.md (e nel report HTML)", GRIGIO))
+    print(c('e mostrata a fine scansione. Puoi rivederla quando vuoi dalla voce "Interpreta report".', GRIGIO))
     interpreta = chiedi_si_no("Vuoi anche la spiegazione guidata dei risultati?", True)
 
     url = normalizza_url(url)[0]
@@ -343,6 +360,64 @@ def esegui_scansione():
             avviso("Scansione interrotta.")
     else:
         print("\n" + c("Puoi copiare il comando e lanciarlo quando vuoi.", GRIGIO))
+    pausa()
+
+
+# --------------------------------------------------------------------------
+# Interpreta un report salvato (voce operativa): la spiegazione guidata a richiesta
+# --------------------------------------------------------------------------
+
+MAX_REPORT_ELENCATI = 15
+
+
+def leggi_report(percorso):
+    """(modello, descrizione) di un report JSON salvato; modello None se il file non è un
+    report web leggibile."""
+    try:
+        model = json.loads(percorso.read_text(encoding="utf-8"))
+        meta = model["meta"]
+        if not isinstance(model["findings"], list):
+            raise TypeError("findings non è una lista")
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, "non leggibile come report web"
+    data = (meta.get("generated_at") or "").replace("T", " ")[:16]
+    attivo = " · con pentest" if meta.get("pentest") else ""
+    return model, f"{meta.get('target') or '?'} · {data}{attivo}"
+
+
+def interpreta_report():
+    """Sceglie un report salvato in reports/json/ e ne mostra la spiegazione guidata:
+    stampata a terminale e salvata (o aggiornata) in reports/md/<nome>_interpretazione.md."""
+    titolo_sezione("INTERPRETA UN REPORT")
+    print(c("Rilegge una scansione salvata e la spiega in linguaggio semplice: per ogni finding", GRIGIO))
+    print(c("cosa significa, come viene attaccato e cosa fare. Regole fisse, tutto offline.", GRIGIO))
+    print(c("Ctrl+C in qualsiasi momento per tornare al menù.", GRIGIO))
+    print()
+
+    salvati = percorsi.report_salvati("json")
+    if not salvati:
+        avviso("Nessun report JSON in reports/json/.")
+        print(c("Esegui prima una scansione (voce 6): la scansione guidata salva sempre il JSON.", GRIGIO))
+        pausa()
+        return
+    elenco = [(p, *leggi_report(p)) for p in salvati[:MAX_REPORT_ELENCATI]]
+    if len(salvati) > MAX_REPORT_ELENCATI:
+        print(c(f"I {MAX_REPORT_ELENCATI} report più recenti su {len(salvati)}.", GRIGIO))
+    scelta = chiedi_scelta("Quale report vuoi interpretare?",
+                           [(p.stem, descrizione) for p, _, descrizione in elenco])
+    percorso, model, _ = elenco[scelta]
+    if model is None:
+        print()
+        errore_input(f"{percorso.name} non è un report web di ApocalypseStriker leggibile.")
+        pausa()
+        return
+
+    lettura = interprete_web.interpreta_web(model)
+    destinazione = interprete_web.salva(lettura, percorso.stem)
+    interprete_web.print_interpretazione(lettura, destinazione)
+    html = percorsi.REPORTS / "html" / f"{percorso.stem}.html"
+    if html.is_file():
+        print(c(f"Report HTML della stessa scansione: {html}", GRIGIO))
     pausa()
 
 
@@ -381,12 +456,14 @@ VOCI = [
          ("PRIMA DI INIZIARE", PRIMA_DI_INIZIARE)),
     Voce("3", "Vulnerability Assessment", "La scansione passiva: cosa controlla",
          ("VULNERABILITY ASSESSMENT (PASSIVO)", VULNERABILITY_ASSESSMENT)),
-    Voce("4", "Penetration Testing", "La scansione attiva (ZAP) e il doppio consenso",
+    Voce("4", "Penetration Testing", "La scansione attiva e il doppio consenso",
          ("PENETRATION TESTING (ATTIVO)", PENETRATION_TESTING)),
     Voce("5", "Opzioni e report", "Flag, formati, nome del report, spiegazione",
          ("OPZIONI E FORMATI DEL REPORT", OPZIONI)),
     Voce("6", "Esegui una scansione", "Scansione guidata, con spiegazione dei risultati",
          esegui_scansione, stile="azione"),
+    Voce("7", "Interpreta report", "Spiega un report salvato: rischi, attacchi, rimedi",
+         interpreta_report, stile="azione"),
     Voce("0", "Esci", "", stile="esci"),
 ]
 
