@@ -1,0 +1,15 @@
+# Bytecode di Python
+__pycache__/
+*.py[cod]
+
+# Ambienti virtuali
+.venv/
+venv/
+
+# Metadati di pacchetto (pip install -e .)
+*.egg-info/
+
+# Cache di pytest
+.pytest_cache/
+
+# reports/ resta versionata: contiene i report di esempio.
