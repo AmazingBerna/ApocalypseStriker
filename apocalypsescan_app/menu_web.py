@@ -18,9 +18,11 @@ oppure:
     python -m apocalypsescan_app.menu_web
 """
 
+import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from typing import NamedTuple
 
 from apocalypsescan_app import __version__
@@ -203,14 +205,36 @@ FORMATI_PRESET = (
 )
 
 
-def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True):
+def nome_report_predefinito():
+    """Il nome proposto per il report: lo stesso default di web_report (web_<data-ora>)."""
+    return f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+def valida_nome_report(valore):
+    """Un nome di file semplice: niente cartelle (separatori di percorso) né estensione,
+    perché la cartella (reports/<formato>/) e l'estensione le decide il formato."""
+    if not valore:
+        return "Inserisci un nome per il report."
+    if "/" in valore or "\\" in valore:
+        return "Solo il nome, senza cartelle: niente '/' o '\\' (il report va in reports/<formato>/)."
+    if "." in valore:
+        return "Solo il nome, senza estensione: niente '.' (l'estensione dipende dal formato)."
+    if valore.startswith("-") or not re.fullmatch(r"[\w-]+", valore):
+        return "Usa solo lettere, cifre, '_' e '-' (senza spazi e senza '-' iniziale)."
+    return None
+
+
+def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True, output=None):
     """Il comando della scansione web. Lo esegue via "-m apocalypsescan_app.web.web_report"
     (modulo autonomo, non dipende da main.py); mai --yes, così la conferma di autorizzazione
     (e, con --pentest, il secondo consenso) viene sempre chiesta dentro web_report.
+    output: il nome del report (--output); se manca web_report usa web_<data-ora>.
     Restituisce (argv_da_eseguire, comando_mostrato)."""
     opzioni = ["--env", ambiente, "--format", ",".join(formati)] + ([] if nvd else ["--no-nvd"])
     if pentest:
         opzioni += ["--pentest"] + ([] if crawl else ["--no-crawl"])
+    if output:
+        opzioni += ["--output", output]
     argv = [sys.executable, "-m", "apocalypsescan_app.web.web_report", url, *opzioni]
     # ciò che l'utente può digitare da sé: il comando equivalente del programma installato
     mostrato = "apocalypse attack " + " ".join(shlex.quote(a) for a in [url, *opzioni])
@@ -218,7 +242,7 @@ def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True):
 
 
 def esegui_scansione():
-    """Scansione guidata: chiede URL, ambiente, tipo di analisi, CVE e formati,
+    """Scansione guidata: chiede URL, ambiente, tipo di analisi, CVE, formati e nome del report,
     costruisce il comando e, se richiesto, lo avvia (con la conferma di autorizzazione)."""
     titolo_sezione("ESEGUI UNA SCANSIONE - VAPT WEB")
     print(c("Il drago punta l'applicazione: ricognizione PASSIVA (header, cookie, TLS,", GRIGIO))
@@ -264,8 +288,15 @@ def esegui_scansione():
         "In quali formati vuoi il report?",
         [(", ".join(f), d) for f, d in FORMATI_PRESET])][0]
 
+    passo("Nome del report")
+    mostra_opzioni(("--output NOME", "il nome dei file del report, senza estensione"))
+    print(c("Ogni formato finisce nella sua cartella: reports/md/NOME.md, reports/json/NOME.json...", GRIGIO))
+    nome = chiedi("Come vuoi chiamare il report?", default=nome_report_predefinito(),
+                  valida=valida_nome_report)
+
     url = normalizza_url(url)[0]
-    argv, mostrato = comando_web(url, ambiente, nvd, formati, pentest=pentest, crawl=crawl)
+    argv, mostrato = comando_web(url, ambiente, nvd, formati, pentest=pentest, crawl=crawl,
+                                 output=nome)
     analisi = "VA passivo + Penetration Testing attivo" if pentest else "Vulnerability Assessment (passivo)"
     print()
     riga("-")
@@ -273,6 +304,7 @@ def esegui_scansione():
     print(f"{c('Ambiente:', GRIGIO)}  {c(ambiente, GRASSETTO)}")
     print(f"{c('Analisi:', GRIGIO)}   {c(analisi, GRASSETTO)}")
     print(f"{c('Formati:', GRIGIO)}   {c(', '.join(formati), GRASSETTO)}")
+    print(f"{c('Report:', GRIGIO)}    {c(nome, GRASSETTO)}")
     print("\n" + c("Comando equivalente:", TITOLO) + "\n")
     print("  " + c(mostrato, AZIONE))
     riga("-")

@@ -157,7 +157,7 @@ apre un menù testuale a colori (fucsia) con il banner e le voci:
 
 Si sceglie una voce digitandone il numero e premendo `Invio`; `0` (o `Ctrl+C`) esce.
 
-La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD** e in quali **formati** salvare il report. Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione.
+La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD**, in quali **formati** salvare il report e il **nome del report** (proposto `web_<data-ora>`; solo lettere, cifre, `_` e `-`, senza cartelle né estensione: diventa `--output NOME`). Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione.
 
 I colori seguono la palette fucsia del drago e si disattivano da soli quando l'output non è un terminale o è impostata la variabile `NO_COLOR`. Senza il comando `apocalypse`, il menù si apre con `python -m apocalypsescan_app.menu_web`.
 
@@ -261,7 +261,7 @@ Opzioni di `apocalypse attack <url>`:
 | `--no-crawl` | con `--pentest`: testa solo l'URL dato e i suoi form, senza esplorare i link interni | crawler attivo |
 | `--yes-pentest` | con `--pentest`: salta il secondo consenso dell'attivo (automazione) | consenso chiesto |
 | `--no-nvd` | non cercare le CVE su NVD (prodotto e versione non escono dalla macchina) | NVD interrogato |
-| `--output NOME` | nome del report | `web_<timestamp>` |
+| `--output NOME` | nome del report: i file finiscono in `reports/<formato>/NOME.<formato>` (chiesto anche nella scansione guidata) | `web_<timestamp>` |
 | `--yes` | salta la conferma di autorizzazione, e con `--pentest` anche il secondo consenso (richiede `--env`) | conferma chiesta |
 | `--no-banner` | non mostra l'animazione del drago all'avvio | animazione mostrata |
 
