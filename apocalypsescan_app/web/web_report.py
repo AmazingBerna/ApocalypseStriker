@@ -19,6 +19,7 @@ from ..renderers.markdown_web import render as render_web
 from ..report_model import FINDING_FIELDS, _assign_ids, _normalize
 from ..threat_intel import ThreatIntelError, load_threat_intel
 from . import cve_nvd
+from . import interprete_web
 from . import pentest as pentest_mod
 from . import recon as recon_mod
 from . import web_risk
@@ -234,6 +235,9 @@ def main(argv=None):
                         help="Con --pentest: salta il secondo consenso dell'attivo (automazione)")
     parser.add_argument("--no-banner", action="store_true",
                         help="Non mostrare l'animazione del drago all'avvio")
+    parser.add_argument("--interpreta", action="store_true",
+                        help="Genera anche la spiegazione guidata dei risultati (regole fisse, "
+                             "offline): reports/md/<nome>_interpretazione.md e lettura a terminale")
     args = parser.parse_args(argv)
     if args.yes and args.env is None:
         parser.error("con --yes l'ambiente va indicato con --env: il report non può esserne privo")
@@ -292,6 +296,13 @@ def main(argv=None):
               + (", scansione troncata per budget" if pentest_meta.get("troncato") else "") + ").")
     for percorso in percorsi:
         print(f"[OK] Report scritto: {percorso}")
+
+    if args.interpreta:
+        # dal modello già in memoria: niente rilettura del JSON
+        lettura = interprete_web.interpreta_web(model)
+        percorso_lettura = interprete_web.salva(lettura, nome)
+        print(f"[OK] Interpretazione scritta: {percorso_lettura}")
+        interprete_web.print_interpretazione(lettura, percorso_lettura)
     return 0
 
 

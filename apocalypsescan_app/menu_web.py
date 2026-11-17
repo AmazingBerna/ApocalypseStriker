@@ -81,7 +81,9 @@ la probabilità tiene conto di quanto è esposto e, per le CVE, dei dati CISA KE
 # Il report
 
 Alla fine ottieni un report con i finding ordinati per rischio, l'autorizzazione
-registrata e le tecnologie riconosciute. Vedi le voci 5 ed 6.
+registrata e le tecnologie riconosciute. A richiesta (--interpreta) anche una
+spiegazione guidata: per ogni finding cosa significa, come viene attaccato e cosa
+fare, ricavata da regole fisse e offline. Vedi le voci 5 ed 6.
 """
 
 PRIMA_DI_INIZIARE = """\
@@ -176,7 +178,10 @@ OPZIONI = """\
 --no-nvd               non cercare le CVE su NVD: prodotto e versione non escono
                        dalla macchina
 --no-banner            non mostrare l'animazione del drago all'avvio
---output NOME          nome del report (default: web_<data-ora>)
+--output NOME          nome del report (default: web_<data-ora>): solo lettere,
+                       cifre, _ e -, senza cartelle né estensione
+--interpreta           spiega i risultati in linguaggio semplice (cosa significa,
+                       come viene attaccato, cosa fare): regole fisse, offline
 --yes                  salta la conferma di autorizzazione (richiede --env)
 
 # Formati e dove finiscono i report
@@ -187,6 +192,9 @@ OPZIONI = """\
 I report finiscono nella cartella del progetto, una sottocartella per formato:
 
   reports/md/    reports/json/    reports/csv/
+
+Con --interpreta si aggiunge reports/md/NOME_interpretazione.md, con lo stesso
+nome del report.
 
 ! Il report HTML del web non è ancora disponibile (arriverà con html_web):
 ! per ora i formati web sono md, json e csv.
@@ -224,17 +232,21 @@ def valida_nome_report(valore):
     return None
 
 
-def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True, output=None):
+def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True, output=None,
+                interpreta=False):
     """Il comando della scansione web. Lo esegue via "-m apocalypsescan_app.web.web_report"
     (modulo autonomo, non dipende da main.py); mai --yes, così la conferma di autorizzazione
     (e, con --pentest, il secondo consenso) viene sempre chiesta dentro web_report.
     output: il nome del report (--output); se manca web_report usa web_<data-ora>.
+    interpreta: aggiunge --interpreta (spiegazione guidata dei risultati).
     Restituisce (argv_da_eseguire, comando_mostrato)."""
     opzioni = ["--env", ambiente, "--format", ",".join(formati)] + ([] if nvd else ["--no-nvd"])
     if pentest:
         opzioni += ["--pentest"] + ([] if crawl else ["--no-crawl"])
     if output:
         opzioni += ["--output", output]
+    if interpreta:
+        opzioni += ["--interpreta"]
     argv = [sys.executable, "-m", "apocalypsescan_app.web.web_report", url, *opzioni]
     # ciò che l'utente può digitare da sé: il comando equivalente del programma installato
     mostrato = "apocalypse attack " + " ".join(shlex.quote(a) for a in [url, *opzioni])
@@ -242,8 +254,9 @@ def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True, output=N
 
 
 def esegui_scansione():
-    """Scansione guidata: chiede URL, ambiente, tipo di analisi, CVE, formati e nome del report,
-    costruisce il comando e, se richiesto, lo avvia (con la conferma di autorizzazione)."""
+    """Scansione guidata: chiede URL, ambiente, tipo di analisi, CVE, formati, nome del report e
+    spiegazione guidata, costruisce il comando e, se richiesto, lo avvia (con la conferma di
+    autorizzazione)."""
     titolo_sezione("ESEGUI UNA SCANSIONE - VAPT WEB")
     print(c("Il drago punta l'applicazione: ricognizione PASSIVA (header, cookie, TLS,", GRIGIO))
     print(c("tecnologie, CVE) e, a scelta, PENETRATION TESTING ATTIVO (payload sui parametri).", GRIGIO))
@@ -294,9 +307,15 @@ def esegui_scansione():
     nome = chiedi("Come vuoi chiamare il report?", default=nome_report_predefinito(),
                   valida=valida_nome_report)
 
+    passo("Spiegazione guidata")
+    mostra_opzioni(("--interpreta", "spiega i risultati in linguaggio semplice"))
+    print(c("Per ogni finding: cosa significa, come viene attaccato e cosa fare. Regole fisse,", GRIGIO))
+    print(c(f"offline; salvata in reports/md/{nome}_interpretazione.md e mostrata a fine scansione.", GRIGIO))
+    interpreta = chiedi_si_no("Vuoi anche la spiegazione guidata dei risultati?", True)
+
     url = normalizza_url(url)[0]
     argv, mostrato = comando_web(url, ambiente, nvd, formati, pentest=pentest, crawl=crawl,
-                                 output=nome)
+                                 output=nome, interpreta=interpreta)
     analisi = "VA passivo + Penetration Testing attivo" if pentest else "Vulnerability Assessment (passivo)"
     print()
     riga("-")
@@ -305,6 +324,7 @@ def esegui_scansione():
     print(f"{c('Analisi:', GRIGIO)}   {c(analisi, GRASSETTO)}")
     print(f"{c('Formati:', GRIGIO)}   {c(', '.join(formati), GRASSETTO)}")
     print(f"{c('Report:', GRIGIO)}    {c(nome, GRASSETTO)}")
+    print(f"{c('Spiegaz.:', GRIGIO)}  {c('sì' if interpreta else 'no', GRASSETTO)}")
     print("\n" + c("Comando equivalente:", TITOLO) + "\n")
     print("  " + c(mostrato, AZIONE))
     riga("-")
@@ -363,9 +383,10 @@ VOCI = [
          ("VULNERABILITY ASSESSMENT (PASSIVO)", VULNERABILITY_ASSESSMENT)),
     Voce("4", "Penetration Testing", "La scansione attiva (ZAP) e il doppio consenso",
          ("PENETRATION TESTING (ATTIVO)", PENETRATION_TESTING)),
-    Voce("5", "Opzioni e report", "Flag disponibili, formati e dove finiscono",
+    Voce("5", "Opzioni e report", "Flag, formati, nome del report, spiegazione",
          ("OPZIONI E FORMATI DEL REPORT", OPZIONI)),
-    Voce("6", "Esegui una scansione", "Scansione guidata su un URL", esegui_scansione, stile="azione"),
+    Voce("6", "Esegui una scansione", "Scansione guidata, con spiegazione dei risultati",
+         esegui_scansione, stile="azione"),
     Voce("0", "Esci", "", stile="esci"),
 ]
 

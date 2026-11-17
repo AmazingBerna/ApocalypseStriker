@@ -90,6 +90,7 @@ def test_scansione_guidata_nome_scelto(monkeypatch, capsys):
         "report/sbagliato",     # nome non valido -> ripetuto
         "report.md",            # nome non valido -> ripetuto
         "audit_cliente",        # nome valido
+        "n",                    # niente spiegazione guidata
         "s",                    # lanciarlo adesso
         "",                     # pausa
     ])
@@ -97,12 +98,24 @@ def test_scansione_guidata_nome_scelto(monkeypatch, capsys):
     assert len(lanciati) == 1
     argv = lanciati[0]
     assert argv[argv.index("--output") + 1] == "audit_cliente"
+    assert "--interpreta" not in argv
     assert "audit_cliente" in capsys.readouterr().out
 
 
 def test_scansione_guidata_nome_predefinito(monkeypatch):
     monkeypatch.setattr(menu_web, "nome_report_predefinito", lambda: "web_20261117_120000")
-    lanciati = _simula(monkeypatch, ["https://esempio.it", "", "", "n", "", "", "s", ""])
+    # nome e spiegazione guidata lasciati al default (Invio): la spiegazione è attiva
+    lanciati = _simula(monkeypatch, ["https://esempio.it", "", "", "n", "", "", "", "s", ""])
     menu_web.esegui_scansione()
     argv = lanciati[0]
     assert argv[argv.index("--output") + 1] == "web_20261117_120000"
+    assert "--interpreta" in argv
+
+
+def test_comando_web_interpreta():
+    argv, mostrato = menu_web.comando_web("https://esempio.it/", "test", True, ["md"],
+                                          output="x", interpreta=True)
+    assert argv[-3:] == ["--output", "x", "--interpreta"]
+    assert mostrato.endswith("--output x --interpreta")
+    argv, _ = menu_web.comando_web("https://esempio.it/", "test", True, ["md"])
+    assert "--interpreta" not in argv

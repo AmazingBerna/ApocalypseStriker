@@ -152,12 +152,12 @@ apre un menù testuale a colori (fucsia) con il banner e le voci:
 | Prima di iniziare | autorizzazione e bersagli di prova |
 | Vulnerability Assessment | la scansione passiva: cosa controlla |
 | Penetration Testing | la scansione attiva (ZAP) e il doppio consenso |
-| Opzioni e report | i flag disponibili, i formati e dove finiscono i report |
-| **Esegui una scansione** | scansione guidata su un URL (vedi sotto) |
+| Opzioni e report | i flag disponibili, i formati, il nome del report e la spiegazione guidata |
+| **Esegui una scansione** | scansione guidata su un URL, con spiegazione dei risultati (vedi sotto) |
 
 Si sceglie una voce digitandone il numero e premendo `Invio`; `0` (o `Ctrl+C`) esce.
 
-La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD**, in quali **formati** salvare il report e il **nome del report** (proposto `web_<data-ora>`; solo lettere, cifre, `_` e `-`, senza cartelle né estensione: diventa `--output NOME`). Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione.
+La **scansione guidata** chiede, in ordine: l'**URL**, l'**ambiente** (`sviluppo`, `test`, `staging`, `produzione`), il tipo di analisi (solo VA passivo o anche il PT attivo), se cercare le **CVE su NVD**, in quali **formati** salvare il report e il **nome del report** (proposto `web_<data-ora>`; solo lettere, cifre, `_` e `-`, senza cartelle né estensione: diventa `--output NOME`) e se vuoi anche la **spiegazione guidata** dei risultati (`--interpreta`, proposta di default). Costruisce il comando equivalente, lo mostra e, se vuoi, lo avvia. Prima di partire viene sempre chiesta la conferma di autorizzazione.
 
 I colori seguono la palette fucsia del drago e si disattivano da soli quando l'output non è un terminale o è impostata la variabile `NO_COLOR`. Senza il comando `apocalypse`, il menù si apre con `python -m apocalypsescan_app.menu_web`.
 
@@ -226,6 +226,27 @@ Il report (`reports/md/`) contiene, nell'ordine:
 
 I formati disponibili sono **Markdown** (leggibile), **JSON** (il modello completo) e **CSV** (i finding in tabella); finiscono nelle cartelle `reports/md/`, `reports/json/`, `reports/csv/`. Il report HTML per il web è in arrivo (vedi [§9](#9-sviluppi-futuri)).
 
+### 5.3. Spiegazione guidata: `--interpreta`
+
+Con `--interpreta` (o rispondendo sì nella scansione guidata) dopo i report viene generata anche una **lettura in linguaggio semplice** dei risultati, dal modello già in memoria. Viene salvata con lo stesso nome del report, `reports/md/<nome>_interpretazione.md`, e la parte essenziale viene stampata a terminale.
+
+```bash
+apocalypse attack https://esempio.it --pentest --output audit_cliente --interpreta
+# -> reports/md/audit_cliente.md  e  reports/md/audit_cliente_interpretazione.md
+```
+
+La lettura contiene il **verdetto** complessivo, i conteggi per livello, i **punti chiave** (passivo o anche attivo, categorie OWASP coinvolte, CVE nel catalogo KEV), le **priorità** (i finding a rischio più alto) e, per ogni finding, una scheda in tre voci:
+
+- **Cosa significa**: la causa tecnica, in una o due frasi;
+- **Come viene attaccata**: l'attacco concreto e cosa ottiene l'attaccante;
+- **Cosa fare**: la correzione, concisa e azionabile;
+
+più il *perché* del livello (impatto × probabilità, con la scala del modello di rischio) e i **limiti**: cosa non è stato controllato (pentest non eseguito o troncato, NVD disattivato, categorie OWASP non testate).
+
+Le schede coprono SQL injection, XSS, command injection, SSTI, path traversal/LFI, open redirect, SSRF (come candidato da verificare a mano), file sensibili esposti, CSRF e IDOR, header di sicurezza (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), flag dei cookie, TLS debole o certificato non valido, sito senza HTTPS, divulgazione di tecnologie e componenti con CVE note. Il tipo si ricava dal finding: per il test attivo dalla classe `pt-<classe>-…`, per i controlli passivi da fonte e voce. Le schede di CSRF e IDOR sono pronte ma compaiono solo quando il modello contiene finding di quel tipo.
+
+È tutto **deterministico e offline**: regole fisse in [`web/interprete_web.py`](apocalypsescan_app/web/interprete_web.py), sola libreria standard, nessun modello di linguaggio. Le parti variabili (parametro, cookie, URL, CVE) vengono solo dai campi del finding. Non sostituisce un esperto, e l'assenza di un finding non è una garanzia.
+
 ### 5.2. Modello: Rischio = Impatto × Probabilità
 
 | Valore | Impatto (danno se sfruttato) | Probabilità (verosimiglianza) |
@@ -262,6 +283,7 @@ Opzioni di `apocalypse attack <url>`:
 | `--yes-pentest` | con `--pentest`: salta il secondo consenso dell'attivo (automazione) | consenso chiesto |
 | `--no-nvd` | non cercare le CVE su NVD (prodotto e versione non escono dalla macchina) | NVD interrogato |
 | `--output NOME` | nome del report: i file finiscono in `reports/<formato>/NOME.<formato>` (chiesto anche nella scansione guidata) | `web_<timestamp>` |
+| `--interpreta` | genera anche la spiegazione guidata dei risultati in `reports/md/NOME_interpretazione.md` e la stampa a terminale (vedi [§5.3](#53-spiegazione-guidata---interpreta)) | non generata |
 | `--yes` | salta la conferma di autorizzazione, e con `--pentest` anche il secondo consenso (richiede `--env`) | conferma chiesta |
 | `--no-banner` | non mostra l'animazione del drago all'avvio | animazione mostrata |
 
@@ -292,6 +314,7 @@ ApocalypseStriker/
 │   │   ├── pentest.py          # penetration testing ATTIVO nativo (crawler + payload) — solo stdlib
 │   │   ├── cve_nvd.py          # ricerca delle CVE note su NVD
 │   │   ├── web_report.py       # pipeline VA (+ pentest) e scrittura report
+│   │   ├── interprete_web.py   # spiegazione guidata a regole (--interpreta) — offline, solo stdlib
 │   │   └── zap_scan.py         # wrapper OWASP ZAP (alternativa avanzata, richiede un daemon ZAP)
 │   └── renderers/
 │       ├── markdown_web.py     # report Markdown del VAPT web
@@ -300,6 +323,7 @@ ApocalypseStriker/
 ├── assets/
 │   ├── apocalypse-striker-banner.svg   # logo APOCALYPSE STRIKER (in cima al README)
 │   └── apocalypse-striker-dragon.svg   # il drago fucsia e le funzioni del VAPT web
+├── tests/                      # test pytest (python -m pytest), senza accesso di rete
 └── reports/                    # report generati, una sottocartella per formato
 ```
 
