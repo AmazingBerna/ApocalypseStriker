@@ -19,10 +19,13 @@ from ..renderers.markdown_web import render as render_web
 from ..report_model import FINDING_FIELDS, _assign_ids, _normalize
 from ..threat_intel import ThreatIntelError, load_threat_intel
 from . import cve_nvd
+from . import pentest as pentest_mod
 from . import recon as recon_mod
 from . import web_risk
 
 MODE_VA = "VAPT web - Vulnerability Assessment (ricognizione passiva, sola lettura)"
+MODE_VAPT = ("VAPT web - Vulnerability Assessment (passivo) + Penetration Testing (attivo: "
+             "payload inviati al bersaglio)")
 
 # Renderer del report web. markdown_web è specifico del modello web; json_out (il modello
 # in JSON) e csv_out (la lista dei finding) lavorano su qualunque modello e non vanno toccati.
@@ -108,15 +111,19 @@ class _SenzaBarra:
         pass
 
 
-def fasi_web(nvd=True):
-    """Fasi della barra di avanzamento, nell'ordine in cui vulnerability_assessment le esegue."""
-    return ["web_recon"] + (["web_cve", "threat_intel"] if nvd else []) + ["report"]
+def fasi_web(nvd=True, pentest=False):
+    """Fasi della barra di avanzamento, nell'ordine in cui vengono eseguite. Con pentest
+    si aggiungono la scoperta (crawl) e il test attivo, prima della scrittura del report."""
+    fasi = ["web_recon"] + (["web_cve", "threat_intel"] if nvd else [])
+    if pentest:
+        fasi += ["web_crawl", "web_pentest"]
+    return fasi + ["report"]
 
 
-def vulnerability_assessment(url, nvd=True, progress=None):
-    """Esegue recon + ricerca CVE + scoring e restituisce il modello del report web.
-    nvd=False non interroga NVD (nessun dato sulle tecnologie esce dalla macchina).
-    progress: ProgressTracker creato con fasi_web(nvd); None = nessuna barra."""
+def _esegui_va(url, nvd=True, progress=None):
+    """Ricognizione passiva + CVE + scoring. Restituisce (recon_result, findings_grezzi,
+    intel): i finding NON sono ancora normalizzati, così si possono unire a quelli del
+    penetration testing prima di costruire un unico modello."""
     fasi = progress or _SenzaBarra()
 
     fasi.begin("web_recon", "Ricognizione passiva (HTTP, TLS)")
@@ -140,6 +147,13 @@ def vulnerability_assessment(url, nvd=True, progress=None):
         cve_nvd.arricchisci(tecnologie, attivo=False)
 
     findings = web_risk.valuta_recon(risultato, intel)
+    return risultato, findings, intel
+
+
+def vulnerability_assessment(url, nvd=True, progress=None):
+    """Esegue il solo Vulnerability Assessment (passivo) e restituisce il modello del report.
+    nvd=False non interroga NVD. progress: ProgressTracker creato con fasi_web(nvd)."""
+    risultato, findings, intel = _esegui_va(url, nvd, progress)
     return build_web_model(risultato, findings, intel=intel)
 
 
@@ -205,10 +219,19 @@ def main(argv=None):
                         help="Formati del report separati da virgola: md, json, csv (default: md). "
                              "L'HTML per il web arriverà in una prossima versione.")
     parser.add_argument("--yes", action="store_true",
-                        help="Salta la richiesta interattiva di conferma autorizzazione")
+                        help="Salta la richiesta interattiva di conferma autorizzazione (e, con "
+                             "--pentest, anche il secondo consenso)")
     parser.add_argument("--no-nvd", action="store_true",
                         help="Non cercare le CVE su NVD: prodotto e versione delle tecnologie "
                              "rilevate non escono dalla macchina")
+    parser.add_argument("--pentest", action="store_true",
+                        help="Esegue anche il Penetration Testing ATTIVO (invia payload al "
+                             "bersaglio): richiede un secondo consenso dedicato")
+    parser.add_argument("--no-crawl", action="store_true",
+                        help="Con --pentest: testa solo l'URL dato e i suoi form, senza esplorare "
+                             "i link interni")
+    parser.add_argument("--yes-pentest", action="store_true",
+                        help="Con --pentest: salta il secondo consenso dell'attivo (automazione)")
     parser.add_argument("--no-banner", action="store_true",
                         help="Non mostrare l'animazione del drago all'avvio")
     args = parser.parse_args(argv)
@@ -226,11 +249,27 @@ def main(argv=None):
 
     ambiente = args.env or chiedi_ambiente()
     autorizzazione = confirm_autorizzazione(url, ambiente, skip=args.yes)
+    # Il penetration testing attivo ha un SECONDO consenso dedicato, chiesto prima della
+    # barra di avanzamento (come l'autorizzazione): --yes o --yes-pentest lo saltano.
+    # Il PT usa l'URL con la query CONSERVATA (recon.normalizza_url la toglie): i parametri
+    # sono proprio ciò che va testato.
+    url_pt = pentest_mod.normalizza_pt(args.url) if args.pentest else None
+    if args.pentest:
+        pentest_mod.confirm_pentest(url_pt, skip=args.yes or args.yes_pentest)
 
-    progress = ProgressTracker(fasi_web(nvd=not args.no_nvd))
+    progress = ProgressTracker(fasi_web(nvd=not args.no_nvd, pentest=args.pentest))
     progress.start()
-    model = vulnerability_assessment(url, nvd=not args.no_nvd, progress=progress)
+    risultato, findings, intel = _esegui_va(url, nvd=not args.no_nvd, progress=progress)
+    pentest_meta = None
+    if args.pentest:
+        pt_findings, pentest_meta = pentest_mod.penetration_test(
+            url_pt, crawl_attivo=not args.no_crawl, progress=progress, log=log)
+        findings = findings + pt_findings
+    mode = MODE_VAPT if args.pentest else MODE_VA
+    model = build_web_model(risultato, findings, mode=mode, intel=intel)
     model["meta"]["autorizzazione"] = autorizzazione
+    if pentest_meta is not None:
+        model["meta"]["pentest"] = pentest_meta
     formati = parse_formati_web(args.format)
     progress.begin("report", "Generazione report")
     nome = args.output or f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -246,6 +285,11 @@ def main(argv=None):
     scored = [f for f in model["findings"] if f["impact"] is not None]
     print(f"\n[OK] {len(scored)} finding valutati, "
           f"{len(model['findings']) - len(scored)} informativi.")
+    if pentest_meta is not None:
+        attivi = len([f for f in model["findings"] if f["source"] == "pentest" and f["impact"]])
+        print(f"[OK] Penetration testing attivo: {attivi} vulnerabilità confermate "
+              f"({pentest_meta['punti_input']} punti di input, {pentest_meta['richieste']} richieste"
+              + (", scansione troncata per budget" if pentest_meta.get("troncato") else "") + ").")
     for percorso in percorsi:
         print(f"[OK] Report scritto: {percorso}")
     return 0

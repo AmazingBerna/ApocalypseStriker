@@ -199,18 +199,30 @@ def _tabella_rischi(lines, findings):
 
 
 def _portata(lines, model):
-    """Cosa il VA passivo ha controllato e cosa resta fuori: un report senza finding in una
-    categoria non coperta non vuol dire che l'applicazione ne sia priva."""
+    """Cosa è stato controllato e cosa resta fuori: un report senza finding in una categoria
+    non coperta non vuol dire che l'applicazione ne sia priva. Se è stato eseguito anche il
+    penetration testing attivo, le categorie provate con payload sono segnalate come tali."""
     tls = model.get("tls")
-    lines.append("## Fuori portata del Vulnerability Assessment passivo\n")
-    lines.append("Questa analisi legge soltanto ciò che l'applicazione espone a una normale richiesta "
-                 "(header, cookie, TLS, banner). Trova debolezze di **configurazione**; le vulnerabilità "
-                 "che si manifestano solo inviando input costruiti apposta (payload) restano fuori, per "
-                 "natura della fase.\n")
+    pentest = (model.get("meta") or {}).get("pentest")
+    categorie_pt = (pentest or {}).get("categorie", {})
+    lines.append("## Portata dell'analisi\n")
+    if pentest:
+        lines.append("Questa analisi unisce la ricognizione **passiva** (header, cookie, TLS, banner: "
+                     "debolezze di **configurazione**) e il **penetration testing attivo** (payload "
+                     "inviati a parametri e form per confermare vulnerabilità sfruttabili). La tabella "
+                     "indica, per ogni categoria OWASP, come è stata coperta.\n")
+    else:
+        lines.append("Questa analisi legge soltanto ciò che l'applicazione espone a una normale "
+                     "richiesta (header, cookie, TLS, banner). Trova debolezze di **configurazione**; "
+                     "le vulnerabilità che si manifestano solo inviando input costruiti apposta "
+                     "(payload) restano fuori, per natura della fase passiva.\n")
     lines.append("| Categoria OWASP | Stato | Cosa riguarda |")
     lines.append("|---|---|---|")
     for chiave in sorted(OWASP):
-        if chiave == "A02" and not tls:
+        if chiave in categorie_pt:
+            stato = "**testata (attivo, con payload)**"
+            cosa = categorie_pt[chiave]
+        elif chiave == "A02" and not tls:
             stato = "controllata (configurazione)"
             cosa = "applicazione servita su HTTP: nessun TLS da ispezionare (vedi finding \"senza HTTPS\")"
         elif chiave == "A02" and tls.get("error"):
@@ -223,9 +235,19 @@ def _portata(lines, model):
             stato, cosa = "**non testata**", WEB_VA_FUORI_PORTATA.get(chiave, "-")
         lines.append(f"| {OWASP[chiave]} | {stato} | {_cell(cosa)} |")
     lines.append("")
-    lines.append("> L'assenza di finding nelle categorie **non testate** non indica l'assenza di "
-                 "vulnerabilità: non sono state cercate. Richiedono il penetration testing attivo "
-                 "(OWASP ZAP), una fase separata soggetta a un'autorizzazione dedicata.\n")
+    if pentest:
+        nota = ("> Nelle categorie **testate (attivo)** un finding è una vulnerabilità **confermata** "
+                "con payload. L'assenza di finding non è però una garanzia assoluta: sono coperti i "
+                "punti di input raggiunti dal crawler. Le categorie **non testate** non sono state "
+                "cercate da questa scansione.")
+        if pentest.get("troncato"):
+            nota += (" ⚠️ La scansione attiva è stata **troncata** (tetto di punti o di richieste): "
+                     "alcuni punti di input potrebbero non essere stati provati.")
+        lines.append(nota + "\n")
+    else:
+        lines.append("> L'assenza di finding nelle categorie **non testate** non indica l'assenza di "
+                     "vulnerabilità: non sono state cercate. Richiedono il penetration testing attivo, "
+                     "una fase separata soggetta a un consenso dedicato (opzione `--pentest`).\n")
 
 
 def _note(lines):

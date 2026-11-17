@@ -275,3 +275,138 @@ ZAP_SKIP_CONFIDENCE = ("False Positive",)
 
 # indirizzo di default del daemon ZAP (Docker sul PC host, porta interna = esterna)
 ZAP_API_DEFAULT = "http://127.0.0.1:8090"
+
+
+# ============================================================================
+# Penetration testing ATTIVO nativo (web/pentest.py) - fase a sé, sola libreria
+# standard, nessuna dipendenza esterna (gira anche su un Raspberry).
+#
+# A differenza del Vulnerability Assessment passivo (recon.py, sola lettura),
+# questa fase INVIA payload nei punti di input (parametri dell'URL e campi dei
+# form) per CONFERMARE vulnerabilità sfruttabili. È protetta da un secondo
+# consenso dedicato (pentest.confirm_pentest) e NON è distruttiva: payload di
+# sola lettura, tetto di richieste, niente DROP/DELETE/flood, niente scrittura
+# di dati. Stesso modello di rischio: rischio = impatto x probabilità.
+#
+# La probabilità dei finding attivi è alta perché il test CONFERMA lo
+# sfruttamento (non è un semplice indizio come nel passivo): per questo molti
+# valgono 4-5. L'impatto resta legato al danno della singola classe.
+# ============================================================================
+
+# --- Crawler di scoperta (spider leggero, stesso host, http/https) ---
+PT_CRAWL_MAX_PAGES = 40        # numero massimo di pagine visitate dallo spider
+PT_CRAWL_MAX_DEPTH = 3         # profondità massima dei link interni seguiti
+PT_CRAWL_SAME_HOST = True      # non esce mai dall'host del bersaglio
+
+# --- Budget e tempi (protezione del bersaglio: mai un flood) ---
+PT_MAX_REQUESTS = 800          # tetto totale di richieste dell'intera fase attiva
+PT_MAX_POINTS = 150            # punti di input massimi testati (parametri + campi form)
+PT_TIMEOUT = 12                # secondi di timeout per ogni richiesta
+PT_RETRY_TIMEOUT = 1           # ritenta una volta solo se scade il timeout
+PT_DELAY = 0.0                 # pausa tra richieste in secondi (>0 per rallentare di proposito)
+PT_USER_AGENT = "ApocalypseStriker-pentest/1.0 (autorizzato)"
+
+# --- Rilevamento time-based (SQLi/Command Injection) ---
+# Si conferma solo se la risposta col payload "lento" supera la soglia MENTRE una
+# richiesta di controllo (payload con ritardo 0) resta sotto: così un bersaglio
+# genericamente lento non produce falsi positivi.
+PT_TIME_DELAY = 5              # secondi di ritardo che il payload chiede al server
+PT_TIME_THRESHOLD = 4.0        # oltre questi secondi la risposta è considerata "ritardata"
+PT_MAX_TIME_PROBES = 40        # quante sonde time-based al massimo in una scansione (sono lente)
+PT_BODY_LIMIT = 300 * 1024     # byte del corpo letti per ogni risposta (confronto differenziale)
+
+# Differenza minima (0-1, su SequenceMatcher) perché due risposte siano "diverse":
+# serve al boolean-based SQLi (condizione vera ~ pagina base, condizione falsa diversa)
+PT_DIFF_RATIO = 0.06
+
+# --- Punteggi dei finding attivi: (owasp, impatto, probabilità, motivazione) ---
+PT_SQLI_ERROR = ("A03", 5, 5,
+    "SQL injection confermata: un apice nel parametro provoca un errore SQL del database "
+    "non presente nella risposta di base. L'input finisce in una query senza parametrizzazione: "
+    "permette lettura/alterazione dei dati e spesso l'accesso completo al database.")
+PT_SQLI_BOOLEAN = ("A03", 5, 4,
+    "SQL injection (boolean-based): una condizione sempre vera restituisce la pagina di base, "
+    "una sempre falsa una pagina diversa. La query è influenzabile dall'input: dati estraibili "
+    "un bit alla volta, anche senza messaggi di errore.")
+PT_SQLI_TIME = ("A03", 5, 5,
+    "SQL injection (time-based): un payload che chiede al database di attendere ritarda la "
+    "risposta in modo misurabile, mentre la richiesta di controllo resta veloce. La query "
+    "esegue input arbitrario: estrazione dati 'alla cieca' confermata.")
+PT_XSS_REFLECTED = ("A03", 4, 4,
+    "Cross-Site Scripting riflesso: un marcatore con caratteri speciali (< > \" ') torna "
+    "nella risposta HTML senza codifica, in un contesto eseguibile. Un attaccante può far "
+    "eseguire script nel browser della vittima (furto di sessione, azioni per suo conto).")
+PT_CMDI = ("A03", 5, 5,
+    "Command injection: l'input viene passato a una shell del sistema. Confermata facendo "
+    "attendere il server (ritardo misurato) o facendogli restituire un marcatore prodotto da "
+    "un comando: esecuzione di comandi arbitrari sul server.")
+PT_SSTI = ("A03", 5, 5,
+    "Server-Side Template Injection: un'espressione del motore di template (es. {{7*7}}) viene "
+    "valutata e restituisce il risultato del calcolo. Porta tipicamente all'esecuzione di codice "
+    "sul server.")
+PT_PATH_TRAVERSAL = ("A01", 4, 5,
+    "Path traversal / Local File Inclusion: con '../' il parametro legge un file di sistema "
+    "(es. /etc/passwd) fuori dalla cartella prevista. Espone file arbitrari del server, "
+    "configurazioni e segreti inclusi.")
+PT_OPEN_REDIRECT = ("A01", 2, 4,
+    "Open redirect: il parametro controlla la destinazione di un redirect verso un host esterno "
+    "arbitrario. Utile per phishing credibile (il link parte dal dominio fidato) e per aggirare "
+    "alcune protezioni.")
+PT_SSRF = ("A10", 4, 3,
+    "Possibile Server-Side Request Forgery: il parametro sembra far compiere al server una "
+    "richiesta verso un URL fornito dall'utente. Va confermato con un endpoint di callback "
+    "controllato: qui è segnalato come candidato da verificare a mano.")
+PT_EXPOSED_FILE = ("A05", 4, 5,
+    "File sensibile esposto: una risorsa che non dovrebbe essere pubblica (es. .env, .git, "
+    "copia di backup, elenco directory) è scaricabile. Spesso contiene credenziali, codice "
+    "sorgente o dati riservati.")
+
+# --- Firme di errore SQL per DBMS (rilevamento error-based) ---
+# (regex, etichetta del motore). Confermano l'iniezione solo se COMPAIONO con il
+# payload e NON erano già nella risposta di base.
+PT_SQL_ERROR_SIGNATURES = (
+    (r"you have an error in your sql syntax", "MySQL/MariaDB"),
+    (r"warning:\s*mysqli?_", "MySQL (PHP)"),
+    (r"mysql_fetch_(array|assoc|row|object)", "MySQL (PHP)"),
+    (r"com\.mysql\.jdbc", "MySQL (JDBC)"),
+    (r"unclosed quotation mark after the character string", "MSSQL"),
+    (r"microsoft (ole db|sql server|odbc)", "MSSQL"),
+    (r"unterminated quoted string at or near", "PostgreSQL"),
+    (r"pg_query\(\)|pg_exec\(\)", "PostgreSQL"),
+    (r"psql:.*error", "PostgreSQL"),
+    (r"ora-\d{5}", "Oracle"),
+    (r"quoted string not properly terminated", "Oracle"),
+    (r"sqlite3?\.(operational|programming)error", "SQLite"),
+    (r"sqlite_error|no such column", "SQLite"),
+    (r"syntax error at or near", "SQL (generico)"),
+)
+
+# --- Firme che confermano la lettura di un file di sistema (path traversal) ---
+# (regex, descrizione del file letto)
+PT_LFI_SIGNATURES = (
+    (r"root:.*:0:0:", "/etc/passwd (utenti Unix)"),
+    (r"\[(extensions|fonts|mci extensions)\]", "win.ini (Windows)"),
+    (r"for 16-bit app support", "win.ini (Windows)"),
+)
+
+# --- Firme di contenuto dei file sensibili esposti ---
+# percorso -> (regex di conferma del contenuto, descrizione)
+PT_EXPOSED_SIGNATURES = {
+    "/.env": (r"(?im)^\s*[A-Z0-9_]+\s*=", "variabili d'ambiente (possibili credenziali)"),
+    "/.git/HEAD": (r"ref:\s*refs/", "repository Git (codice sorgente e cronologia)"),
+    "/.git/config": (r"\[core\]", "configurazione Git del repository"),
+    "/.svn/entries": (r"(?s)\d+\s", "repository Subversion"),
+    "/config.php.bak": (r"<\?php", "copia di backup del sorgente PHP"),
+    "/.htpasswd": (r":\$(apr1|2y|1)\$", "credenziali .htpasswd"),
+    "/server-status": (r"Apache Server Status", "pagina di stato Apache (mod_status)"),
+}
+# Risorse da sondare (oltre a quelle con firma sopra); confermate dallo status 200 + firma
+PT_EXPOSED_EXTRA_PATHS = ("/backup/", "/backup.zip", "/backup.sql", "/db.sql",
+                          "/dump.sql", "/.git/", "/.DS_Store", "/phpinfo.php")
+
+# Nomi di parametro che tipicamente controllano un redirect o un URL di destinazione
+PT_REDIRECT_PARAMS = ("next", "url", "redirect", "redirect_uri", "redirect_url", "return",
+                      "returnurl", "return_url", "dest", "destination", "continue", "to",
+                      "goto", "out", "link", "target", "r", "u")
+# Host esterno usato come sonda per open redirect / SSRF (dominio di esempio riservato IANA)
+PT_PROBE_HOST = "example.org"

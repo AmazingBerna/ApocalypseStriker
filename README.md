@@ -15,7 +15,8 @@ Il VAPT si compone di due fasi, due livelli di invasività:
 | Fase | Tipo | Cosa fa | Stato |
 |---|---|---|---|
 | **Vulnerability Assessment** | passiva (sola lettura) | legge header di sicurezza, cookie, TLS e tecnologie come un browser, e cerca le CVE note delle versioni | **attiva** |
-| **Penetration Testing** (OWASP ZAP) | attiva (sollecita il bersaglio) | spider e passive scan osservano; l'*active scan* invia richieste di prova | modulo pronto, fase a sé (vedi [§9](#9-sviluppi-futuri)) |
+| **Penetration Testing** (motore nativo) | attiva (sollecita il bersaglio) | scopre i punti di input (parametri e form) e invia payload per confermare SQLi, XSS, command injection, SSTI, path traversal, open redirect, file esposti | **attiva** — opzione `--pentest`, sola stdlib (vedi [§4.4](#44-penetration-testing-attivo---pentest)) |
+| **Penetration Testing** (OWASP ZAP) | attiva (sollecita il bersaglio) | spider e passive scan osservano; l'*active scan* invia richieste di prova | alternativa avanzata, richiede un daemon ZAP (vedi [§9](#9-sviluppi-futuri)) |
 
 Ogni finding riceve un impatto (1-5) e una probabilità (1-5); la probabilità delle CVE è pesata con i dati **CVSS**, **EPSS** e **CISA KEV**. Il report li riunisce in un'unica tabella con una matrice di rischio 5×5.
 
@@ -35,7 +36,7 @@ La ricognizione passiva rileva:
 - **tecnologie** — server e framework dichiarati (es. nginx, PHP) e, dove possibile, la versione;
 - **CVE note** — per prodotto e versione, cercate su NVD e pesate con KEV/EPSS.
 
-Il penetration testing attivo si appoggia a **OWASP ZAP** (modulo [`web/zap_scan.py`](apocalypsescan_app/web/zap_scan.py)): spider e passive scan non attaccano, l'*active scan* invia payload ed è l'unica parte che sollecita il bersaglio. Tutta la comunicazione, sia nella ricognizione sia verso ZAP, usa solo la **libreria standard** di Python.
+Il penetration testing attivo è un **motore nativo** ([`web/pentest.py`](apocalypsescan_app/web/pentest.py)), scritto in sola **libreria standard** (nessuna dipendenza, gira anche su un Raspberry). Con l'opzione `--pentest` scopre i punti di input dell'applicazione (parametri dell'URL e campi dei form, seguendo i link interni con un crawler leggero) e vi invia **payload di prova** per confermare — con un confronto rispetto alla risposta di base — SQL injection (errore, boolean, time), XSS riflesso, command injection, SSTI, path traversal/LFI, open redirect e file sensibili esposti. È intrusivo e perciò protetto da un **secondo consenso** dedicato; i payload sono di sola lettura e non distruttivi, con un tetto di richieste. In alternativa, per chi ha già un daemon **OWASP ZAP**, resta il wrapper [`web/zap_scan.py`](apocalypsescan_app/web/zap_scan.py) (spider, passive e active scan).
 
 ### Il drago, dopo il Risveglio, passa all'attacco
 
@@ -178,7 +179,37 @@ apocalypse attack https://esempio.it --yes --env test --no-nvd
 
 ### 4.3. Output a terminale
 
-All'avvio compare l'animazione del **drago fucsia** in caratteri Braille; si disattiva con `--no-banner` ed è omessa se l'output non è un terminale o è impostata `NO_COLOR`. Durante l'esecuzione una barra di avanzamento mostra le fasi (ricognizione, CVE, report) con il tempo trascorso; al termine viene stampato il numero di finding valutati e il percorso del report.
+All'avvio compare l'animazione del **drago fucsia** in caratteri Braille; si disattiva con `--no-banner` ed è omessa se l'output non è un terminale o è impostata `NO_COLOR`. Durante l'esecuzione una barra di avanzamento mostra le fasi (ricognizione, CVE, eventuale crawl e pentest, report) con il tempo trascorso; al termine viene stampato il numero di finding valutati e il percorso del report.
+
+### 4.4. Penetration testing attivo: `--pentest`
+
+Aggiungendo `--pentest` (o scegliendo *Anche Penetration Testing* nella scansione guidata) dopo il Vulnerability Assessment parte la **fase attiva nativa**: un crawler leggero scopre gli endpoint parametrici e i form dello stesso host, poi ogni punto di input viene provato con payload mirati e il risultato è confrontato con una risposta di base.
+
+```bash
+# VA passivo + penetration testing attivo (chiede DUE consensi)
+apocalypse attack http://localhost:3000 --pentest
+
+# non interattivo: salta autorizzazione e secondo consenso (solo su bersagli tuoi!)
+apocalypse attack http://localhost:3000 --env test --yes --pentest --format md,json
+
+# senza crawler: testa solo l'URL dato e i suoi form
+apocalypse attack 'http://localhost:3000/cerca?q=1' --pentest --no-crawl
+```
+
+**Cosa conferma** (con tecnica differenziale, non a tentativi ciechi):
+
+| Classe | OWASP | Come viene confermata |
+|---|---|---|
+| SQL injection | A03 | errore SQL assente nella base; condizione vera≈base / falsa diversa; ritardo time-based con controllo |
+| Cross-Site Scripting (riflesso) | A03 | marcatore con `<` `>` `"` `'` riflesso **senza** codifica HTML |
+| Command injection | A03 | `sleep` via concatenatori di shell ritarda la risposta (controllo veloce) |
+| SSTI | A03 | un'espressione di template (`{{a*b}}`, `${a*b}`...) viene **calcolata** |
+| Path traversal / LFI | A01 | `../` legge un file di sistema noto (`/etc/passwd`, `win.ini`) |
+| Open redirect | A01 | il parametro reindirizza verso un host esterno di prova |
+| File sensibili esposti | A05 | `.env`, `.git`, backup, elenco directory scaricabili (con firma di contenuto) |
+| SSRF | A10 | candidato segnalato per verifica manuale (serve un callback controllato) |
+
+**Sicurezza della fase attiva.** È intrusiva: perciò un **secondo consenso** dedicato (`--yes-pentest` per saltarlo in automazione) oltre all'autorizzazione iniziale. I payload sono **di sola lettura e non distruttivi** (niente `DROP`/`DELETE`/upload); un tetto di richieste (`PT_MAX_REQUESTS`), un tetto ai punti di input (`PT_MAX_POINTS`) e un tetto alle sonde lente (`PT_MAX_TIME_PROBES`) evitano di sovraccaricare il bersaglio. Tutti i parametri sono in [`config.py`](apocalypsescan_app/config.py), blocco *Penetration testing ATTIVO*. I finding attivi entrano nella **stessa** tabella di rischio dei passivi, con categoria OWASP, URL, parametro ed evidenza (richiesta → risposta); nel report la sezione *Portata dell'analisi* segnala quali categorie sono state provate con payload.
 
 ---
 
@@ -226,9 +257,12 @@ Opzioni di `apocalypse attack <url>`:
 |---|---|---|
 | `--env AMBIENTE` | ambiente dell'applicazione (`sviluppo`, `test`, `staging`, `produzione`), scritto nel report | chiesto se manca |
 | `--format FORMATI` | formati del report separati da virgola: `md`, `json`, `csv` | `md` |
+| `--pentest` | esegue anche il **penetration testing attivo** (invia payload): richiede un secondo consenso | solo VA passivo |
+| `--no-crawl` | con `--pentest`: testa solo l'URL dato e i suoi form, senza esplorare i link interni | crawler attivo |
+| `--yes-pentest` | con `--pentest`: salta il secondo consenso dell'attivo (automazione) | consenso chiesto |
 | `--no-nvd` | non cercare le CVE su NVD (prodotto e versione non escono dalla macchina) | NVD interrogato |
 | `--output NOME` | nome del report | `web_<timestamp>` |
-| `--yes` | salta la conferma di autorizzazione (richiede `--env`) | conferma chiesta |
+| `--yes` | salta la conferma di autorizzazione, e con `--pentest` anche il secondo consenso (richiede `--env`) | conferma chiesta |
 | `--no-banner` | non mostra l'animazione del drago all'avvio | animazione mostrata |
 
 `apocalypse attack --help` mostra l'elenco completo.
@@ -254,10 +288,11 @@ ApocalypseStriker/
 │   ├── progress.py             # barra di avanzamento a colori
 │   ├── web/
 │   │   ├── recon.py            # ricognizione passiva (HTTP, TLS, tecnologie) — solo stdlib
-│   │   ├── web_risk.py         # valutazione dei finding web (categoria OWASP)
+│   │   ├── web_risk.py         # valutazione dei finding web passivi (categoria OWASP)
+│   │   ├── pentest.py          # penetration testing ATTIVO nativo (crawler + payload) — solo stdlib
 │   │   ├── cve_nvd.py          # ricerca delle CVE note su NVD
-│   │   ├── web_report.py       # pipeline del Vulnerability Assessment e scrittura report
-│   │   └── zap_scan.py         # wrapper OWASP ZAP (penetration testing attivo)
+│   │   ├── web_report.py       # pipeline VA (+ pentest) e scrittura report
+│   │   └── zap_scan.py         # wrapper OWASP ZAP (alternativa avanzata, richiede un daemon ZAP)
 │   └── renderers/
 │       ├── markdown_web.py     # report Markdown del VAPT web
 │       ├── json_out.py         # report JSON (il modello completo)
@@ -286,10 +321,11 @@ ApocalypseStriker/
 
 ## 9. Sviluppi futuri
 
-- **Penetration testing attivo nel flusso**: collegare il modulo [`web/zap_scan.py`](apocalypsescan_app/web/zap_scan.py) (spider, passive e *active scan* di OWASP ZAP) alla scansione guidata, con il **secondo consenso** dedicato e un daemon ZAP in Docker. Il passivo è già validato; l'attivo è scritto ma ancora fuori dal flusso.
+- ✅ **Penetration testing attivo nel flusso** — *fatto*: il motore nativo [`web/pentest.py`](apocalypsescan_app/web/pentest.py) è collegato alla scansione (`--pentest`) e alla voce guidata, con il **secondo consenso** dedicato. Non richiede dipendenze.
+- **Wrapper ZAP nel flusso**: in alternativa al motore nativo, collegare anche [`web/zap_scan.py`](apocalypsescan_app/web/zap_scan.py) (spider, passive e *active scan* di OWASP ZAP) alla scansione guidata, per chi ha già un daemon ZAP in Docker.
+- **Autenticazione nel pentest**: login automatico (form o header) per testare le aree riservate e l'IDOR (accesso a dati di altri utenti) con una sessione valida.
+- **Più vettori attivi**: SQLi UNION-based con estrazione, XSS su più contesti (attributo, JS), SSRF con callback integrato, deserializzazione.
 - **Report HTML per il web**: un renderer `html_web` con lo stile della testata, da aprire nel browser (oggi l'HTML esiste solo per i report host).
-- **Più controlli passivi**: `Set-Cookie` su più risposte, header di sicurezza aggiuntivi, catena dei certificati TLS.
-- **Deduplica recon ↔ ZAP**: unire i finding che entrambe le fasi rilevano (ad esempio gli header) senza doppioni.
 - **Confronto tra report** per seguire l'andamento del rischio nel tempo dopo le correzioni.
 
 ---

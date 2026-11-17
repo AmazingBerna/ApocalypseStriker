@@ -22,6 +22,10 @@ PHASE_WEIGHTS = {
     # (~7 s senza chiave) per ogni tecnologia con versione
     "web_recon": 2,
     "web_cve": 2,
+    # Penetration testing attivo: il crawler visita più pagine, l'active test invia
+    # molti payload (la fase più lunga del VAPT web quando richiesta)
+    "web_crawl": 4,
+    "web_pentest": 20,
 }
 
 RESET = "\033[0m"

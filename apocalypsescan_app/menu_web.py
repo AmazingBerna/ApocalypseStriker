@@ -131,23 +131,34 @@ PENETRATION_TESTING = """\
 # Penetration Testing (attivo)
 
 La seconda fase del VAPT: confermare le vulnerabilità sollecitando il bersaglio
-con richieste di prova. ApocalypseStriker la appoggia su OWASP ZAP.
+con richieste di prova. ApocalypseStriker ha un motore ATTIVO nativo, in sola
+libreria standard (nessuna dipendenza): si attiva con l'opzione --pentest o
+scegliendo "Anche Penetration Testing" nella scansione guidata (voce 6).
 
-  Spider + passive scan   ZAP naviga l'applicazione e osserva le risposte. Non
-                          attacca: è come il Vulnerability Assessment, da dentro ZAP.
-  Active scan             invia richieste di prova (payload) per confermare le
-                          vulnerabilità. È l'unica parte che SOLLECITA il bersaglio.
+  Scoperta (crawler)   segue i link interni dello stesso host e raccoglie gli
+                       endpoint parametrici e i form da mettere alla prova.
+  Test attivo          invia payload ai parametri e ai campi dei form e CONFERMA,
+                       con un confronto rispetto alla risposta di base:
+                         - SQL injection (errore / boolean / time-based)
+                         - XSS riflesso
+                         - Command injection (time-based)
+                         - Server-Side Template Injection (SSTI)
+                         - Path traversal / LFI
+                         - Open redirect
+                         - file sensibili esposti (.env, .git, backup)
+                         - SSRF (candidato da verificare a mano)
 
-! L'active scan è intrusivo e ad alto impatto: può generare molte richieste,
-! inserire dati e lasciare tracce. È protetto da un SECONDO consenso dedicato,
-! separato dall'autorizzazione iniziale, e va eseguito solo su sistemi tuoi o
-! con autorizzazione scritta, in un ambiente di prova.
+! Il test attivo INVIA payload: è intrusivo e lascia tracce nei log. È protetto
+! da un SECONDO consenso dedicato, separato dall'autorizzazione iniziale, e va
+! eseguito solo su sistemi tuoi o con autorizzazione scritta. I payload sono di
+! sola lettura e non distruttivi, con un tetto di richieste a protezione del
+! bersaglio (niente DROP/DELETE, niente flood).
 
-# Stato in questa versione
+# Alternativa avanzata: OWASP ZAP
 
-La fase attiva (ZAP) è una fase separata e richiede un daemon ZAP in esecuzione
-(di norma in Docker). Oggi la scansione guidata (voce 6) esegue il solo
-Vulnerability Assessment passivo; l'active scan arriverà come fase a sé.
+Resta disponibile il wrapper per OWASP ZAP (spider, passive e active scan) in
+web/zap_scan.py, utile quando è già in uso un daemon ZAP (di norma in Docker).
+Il motore nativo non richiede nulla ed è la via predefinita.
 """
 
 OPZIONI = """\
@@ -155,6 +166,11 @@ OPZIONI = """\
 
 --env AMBIENTE         ambiente dell'applicazione, scritto nel report
 --format FORMATI       formati del report separati da virgola (vedi sotto)
+--pentest              esegue anche il Penetration Testing ATTIVO (payload al
+                       bersaglio): richiede un secondo consenso dedicato
+--no-crawl             con --pentest: testa solo l'URL e i suoi form, senza
+                       esplorare i link interni
+--yes-pentest          con --pentest: salta il secondo consenso (automazione)
 --no-nvd               non cercare le CVE su NVD: prodotto e versione non escono
                        dalla macchina
 --no-banner            non mostrare l'animazione del drago all'avvio
@@ -187,11 +203,14 @@ FORMATI_PRESET = (
 )
 
 
-def comando_web(url, ambiente, nvd, formati):
+def comando_web(url, ambiente, nvd, formati, pentest=False, crawl=True):
     """Il comando della scansione web. Lo esegue via "-m apocalypsescan_app.web.web_report"
     (modulo autonomo, non dipende da main.py); mai --yes, così la conferma di autorizzazione
-    viene sempre chiesta dentro web_report. Restituisce (argv_da_eseguire, comando_mostrato)."""
+    (e, con --pentest, il secondo consenso) viene sempre chiesta dentro web_report.
+    Restituisce (argv_da_eseguire, comando_mostrato)."""
     opzioni = ["--env", ambiente, "--format", ",".join(formati)] + ([] if nvd else ["--no-nvd"])
+    if pentest:
+        opzioni += ["--pentest"] + ([] if crawl else ["--no-crawl"])
     argv = [sys.executable, "-m", "apocalypsescan_app.web.web_report", url, *opzioni]
     # ciò che l'utente può digitare da sé: il comando equivalente del programma installato
     mostrato = "apocalypse attack " + " ".join(shlex.quote(a) for a in [url, *opzioni])
@@ -201,9 +220,9 @@ def comando_web(url, ambiente, nvd, formati):
 def esegui_scansione():
     """Scansione guidata: chiede URL, ambiente, tipo di analisi, CVE e formati,
     costruisce il comando e, se richiesto, lo avvia (con la conferma di autorizzazione)."""
-    titolo_sezione("ESEGUI UNA SCANSIONE - VULNERABILITY ASSESSMENT (PASSIVO)")
-    print(c("Il drago punta l'applicazione, per ora con il solo sguardo: ricognizione", GRIGIO))
-    print(c("PASSIVA di header, cookie, TLS, tecnologie e CVE note. Nessun payload.", GRIGIO))
+    titolo_sezione("ESEGUI UNA SCANSIONE - VAPT WEB")
+    print(c("Il drago punta l'applicazione: ricognizione PASSIVA (header, cookie, TLS,", GRIGIO))
+    print(c("tecnologie, CVE) e, a scelta, PENETRATION TESTING ATTIVO (payload sui parametri).", GRIGIO))
     print(c("Ctrl+C in qualsiasi momento per annullare e tornare al menù.", GRIGIO))
     passo = Passi()
 
@@ -222,16 +241,16 @@ def esegui_scansione():
     scelta = chiedi_scelta(
         "Quale analisi vuoi eseguire?",
         [("Solo Vulnerability Assessment (passivo)", "sola lettura, non tocca il bersaglio"),
-         ("Anche Penetration Testing (attivo)", "active scan ZAP: intrusivo, secondo consenso")])
-    if scelta == 1:
+         ("Anche Penetration Testing (attivo)", "invia payload ai parametri/form: intrusivo, secondo consenso")])
+    pentest = (scelta == 1)
+    crawl = True
+    if pentest:
         print()
-        avviso("La fase attiva (ZAP active scan) è una fase separata e richiede un daemon",
-               "ZAP in esecuzione: non è ancora disponibile dalla scansione guidata.")
-        print(c("Vedi la voce 4 del menù per come funziona e il doppio consenso.", GRIGIO))
-        if not chiedi_si_no("\nProcedo intanto con il solo Vulnerability Assessment (passivo)?", True):
-            print("\n" + c("Scansione annullata.", GRIGIO))
-            pausa()
-            return
+        avviso("Il Penetration Testing è ATTIVO: invierà payload di prova ai parametri e ai form",
+               "del bersaglio (SQLi, XSS, command injection, SSTI, path traversal...).")
+        print(c("I payload sono di sola lettura e non distruttivi. Prima di partire ti verrà", GRIGIO))
+        print(c("chiesto un SECONDO consenso dedicato, oltre all'autorizzazione iniziale.", GRIGIO))
+        crawl = chiedi_si_no("\nEsplorare anche i link interni per scoprire altri endpoint (crawler)?", True)
 
     passo("CVE note")
     mostra_opzioni(("--no-nvd", "non cercare le CVE delle versioni su NVD"))
@@ -246,16 +265,22 @@ def esegui_scansione():
         [(", ".join(f), d) for f, d in FORMATI_PRESET])][0]
 
     url = normalizza_url(url)[0]
-    argv, mostrato = comando_web(url, ambiente, nvd, formati)
+    argv, mostrato = comando_web(url, ambiente, nvd, formati, pentest=pentest, crawl=crawl)
+    analisi = "VA passivo + Penetration Testing attivo" if pentest else "Vulnerability Assessment (passivo)"
     print()
     riga("-")
     print(f"{c('URL:', GRIGIO)}       {c(url, GRASSETTO)}")
     print(f"{c('Ambiente:', GRIGIO)}  {c(ambiente, GRASSETTO)}")
+    print(f"{c('Analisi:', GRIGIO)}   {c(analisi, GRASSETTO)}")
     print(f"{c('Formati:', GRIGIO)}   {c(', '.join(formati), GRASSETTO)}")
     print("\n" + c("Comando equivalente:", TITOLO) + "\n")
     print("  " + c(mostrato, AZIONE))
     riga("-")
-    print(c("Prima di iniziare ti verrà chiesto di confermare l'autorizzazione.", TITOLO))
+    if pentest:
+        print(c("Ti verranno chiesti DUE consensi: l'autorizzazione iniziale e il consenso", TITOLO))
+        print(c("dedicato al penetration testing attivo (invio di payload).", TITOLO))
+    else:
+        print(c("Prima di iniziare ti verrà chiesto di confermare l'autorizzazione.", TITOLO))
 
     if chiedi_si_no("\nLanciarlo adesso?"):
         print()
