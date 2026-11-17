@@ -14,7 +14,7 @@ from .. import banner
 from ..config import WEB_AMBIENTI
 from ..percorsi import percorso_output, scrivi
 from ..progress import ProgressTracker, log
-from ..renderers import csv_out, json_out
+from ..renderers import csv_out, html_web, json_out
 from ..renderers.markdown_web import render as render_web
 from ..report_model import FINDING_FIELDS, _assign_ids, _normalize
 from ..threat_intel import ThreatIntelError, load_threat_intel
@@ -28,12 +28,12 @@ MODE_VA = "VAPT web - Vulnerability Assessment (ricognizione passiva, sola lettu
 MODE_VAPT = ("VAPT web - Vulnerability Assessment (passivo) + Penetration Testing (attivo: "
              "payload inviati al bersaglio)")
 
-# Renderer del report web. markdown_web è specifico del modello web; json_out (il modello
-# in JSON) e csv_out (la lista dei finding) lavorano su qualunque modello e non vanno toccati.
-# L'HTML resta fuori: html_out.py è host-specifico (legge hosts/porte); il renderer HTML del
-# web (html_web.py) arriverà a parte.
+# Renderer del report web. markdown_web e html_web sono specifici del modello web; json_out
+# (il modello in JSON) e csv_out (la lista dei finding) lavorano su qualunque modello e non
+# vanno toccati. L'HTML riceve anche la spiegazione guidata, se richiesta (--interpreta).
 RENDERERS_WEB = {
     "md": render_web,
+    "html": html_web.render,
     "json": json_out.render,
     "csv": csv_out.render,
 }
@@ -50,8 +50,6 @@ def parse_formati_web(testo):
             continue
         if nome in RENDERERS_WEB:
             formati.append(nome)
-        elif nome == "html":
-            log("[AVVISO] Il report HTML non è ancora disponibile per il web: 'html' saltato.")
         else:
             log(f"[AVVISO] Formato '{nome}' non riconosciuto: saltato "
                 f"(disponibili: {', '.join(RENDERERS_WEB)}).")
@@ -217,8 +215,8 @@ def main(argv=None):
     parser.add_argument("--env", choices=WEB_AMBIENTI, default=None,
                         help="Ambiente dell'applicazione (se manca viene chiesto; obbligatorio con --yes)")
     parser.add_argument("--format", default="md",
-                        help="Formati del report separati da virgola: md, json, csv (default: md). "
-                             "L'HTML per il web arriverà in una prossima versione.")
+                        help="Formati del report separati da virgola: md, html, json, csv "
+                             "(default: md). Ognuno finisce in reports/<formato>/")
     parser.add_argument("--yes", action="store_true",
                         help="Salta la richiesta interattiva di conferma autorizzazione (e, con "
                              "--pentest, anche il secondo consenso)")
@@ -277,9 +275,12 @@ def main(argv=None):
     formati = parse_formati_web(args.format)
     progress.begin("report", "Generazione report")
     nome = args.output or f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # la spiegazione guidata si calcola prima dei report: l'HTML la include
+    lettura = interprete_web.interpreta_web(model) if args.interpreta else None
     percorsi = []
     for fmt in formati:
-        testo = RENDERERS_WEB[fmt](model)
+        testo = (RENDERERS_WEB[fmt](model, lettura) if fmt == "html"
+                 else RENDERERS_WEB[fmt](model))
         # il CSV porta il BOM (utf-8-sig) come nel report host: così Excel lo apre bene
         percorsi.append(scrivi(percorso_output(nome, fmt), testo,
                                encoding="utf-8-sig" if fmt == "csv" else "utf-8"))
@@ -297,9 +298,8 @@ def main(argv=None):
     for percorso in percorsi:
         print(f"[OK] Report scritto: {percorso}")
 
-    if args.interpreta:
+    if lettura is not None:
         # dal modello già in memoria: niente rilettura del JSON
-        lettura = interprete_web.interpreta_web(model)
         percorso_lettura = interprete_web.salva(lettura, nome)
         print(f"[OK] Interpretazione scritta: {percorso_lettura}")
         interprete_web.print_interpretazione(lettura, percorso_lettura)

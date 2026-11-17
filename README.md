@@ -171,7 +171,7 @@ Chiede l'ambiente (se non indicato con `--env`) e la conferma di autorizzazione,
 
 ```bash
 # ambiente e formati sulla riga di comando
-apocalypse attack https://esempio.it --env produzione --format md,json,csv
+apocalypse attack https://esempio.it --env produzione --format md,html,json,csv
 
 # scansione non interattiva (serve --env), senza interrogare NVD
 apocalypse attack https://esempio.it --yes --env test --no-nvd
@@ -224,7 +224,9 @@ Il report (`reports/md/`) contiene, nell'ordine:
 3. **Tabella dei rischi**: conteggio per livello, **matrice 5×5** ed elenco dei finding ordinati per rischio, ognuno con categoria **OWASP**, URL ed evidenza (richiesta/risposta);
 4. **Fuori portata**: cosa il Vulnerability Assessment passivo non può confermare e che richiede il penetration testing attivo.
 
-I formati disponibili sono **Markdown** (leggibile), **JSON** (il modello completo) e **CSV** (i finding in tabella); finiscono nelle cartelle `reports/md/`, `reports/json/`, `reports/csv/`. Il report HTML per il web è in arrivo (vedi [§9](#9-sviluppi-futuri)).
+I formati disponibili sono **Markdown** (leggibile), **HTML** (da aprire nel browser), **JSON** (il modello completo) e **CSV** (i finding in tabella); finiscono nelle cartelle `reports/md/`, `reports/html/`, `reports/json/`, `reports/csv/`.
+
+Il report **HTML** ha lo stesso contenuto del Markdown, impaginato per il browser (tema chiaro/scuro automatico). È un file unico e autonomo: CSS interno, nessuno script, nessuna risorsa esterna, quindi si apre anche offline; tutti i valori letti dal bersaglio (header, URL, payload nelle evidenze) sono resi come testo. Con `--interpreta` contiene anche la sezione **Spiegazione guidata** (vedi [§5.3](#53-spiegazione-guidata---interpreta)).
 
 ### 5.3. Spiegazione guidata: `--interpreta`
 
@@ -277,7 +279,7 @@ Opzioni di `apocalypse attack <url>`:
 | Opzione | Descrizione | Default |
 |---|---|---|
 | `--env AMBIENTE` | ambiente dell'applicazione (`sviluppo`, `test`, `staging`, `produzione`), scritto nel report | chiesto se manca |
-| `--format FORMATI` | formati del report separati da virgola: `md`, `json`, `csv` | `md` |
+| `--format FORMATI` | formati del report separati da virgola: `md`, `html`, `json`, `csv` (ognuno in `reports/<formato>/`) | `md` |
 | `--pentest` | esegue anche il **penetration testing attivo** (invia payload): richiede un secondo consenso | solo VA passivo |
 | `--no-crawl` | con `--pentest`: testa solo l'URL dato e i suoi form, senza esplorare i link interni | crawler attivo |
 | `--yes-pentest` | con `--pentest`: salta il secondo consenso dell'attivo (automazione) | consenso chiesto |
@@ -318,6 +320,7 @@ ApocalypseStriker/
 │   │   └── zap_scan.py         # wrapper OWASP ZAP (alternativa avanzata, richiede un daemon ZAP)
 │   └── renderers/
 │       ├── markdown_web.py     # report Markdown del VAPT web
+│       ├── html_web.py         # report HTML del VAPT web (autonomo, offline, con spiegazione guidata)
 │       ├── json_out.py         # report JSON (il modello completo)
 │       └── csv_out.py          # report CSV (i finding in tabella)
 ├── assets/
@@ -337,7 +340,6 @@ ApocalypseStriker/
 | Il banner mostra il drago piccolo / caratteri rotti | il terminale non è UTF-8 o è troppo stretto: usa un terminale UTF-8 (Windows Terminal), allarga la finestra o imposta `LANG=C.UTF-8` |
 | `con --yes l'ambiente va indicato con --env` | la modalità non interattiva ha bisogno dell'ambiente: aggiungi `--env test` |
 | La scansione non trova l'host / va in timeout | URL errato, oppure la rete in uscita è filtrata: verifica di raggiungere l'URL da un browser. Alcuni bersagli di prova pubblici sono a volte irraggiungibili |
-| `Il report HTML non è ancora disponibile per il web` | per il web i formati sono `md`, `json`, `csv`; l'HTML è in arrivo |
 | L'active scan (ZAP) non parte dalla scansione guidata | è una fase a sé e richiede un daemon ZAP in esecuzione: vedi [§9](#9-sviluppi-futuri) |
 | Su WSL il comando non c'è ma su Windows sì (o viceversa) | i due sistemi non condividono il `.venv`: vedi la nota in [§2.3](#23-se-apocalypse-non-viene-trovato-command-not-found) |
 
@@ -349,7 +351,7 @@ ApocalypseStriker/
 - **Wrapper ZAP nel flusso**: in alternativa al motore nativo, collegare anche [`web/zap_scan.py`](apocalypsescan_app/web/zap_scan.py) (spider, passive e *active scan* di OWASP ZAP) alla scansione guidata, per chi ha già un daemon ZAP in Docker.
 - **Autenticazione nel pentest**: login automatico (form o header) per testare le aree riservate e l'IDOR (accesso a dati di altri utenti) con una sessione valida.
 - **Più vettori attivi**: SQLi UNION-based con estrazione, XSS su più contesti (attributo, JS), SSRF con callback integrato, deserializzazione.
-- **Report HTML per il web**: un renderer `html_web` con lo stile della testata, da aprire nel browser (oggi l'HTML esiste solo per i report host).
+- ✅ **Report HTML per il web** — *fatto*: il renderer [`renderers/html_web.py`](apocalypsescan_app/renderers/html_web.py) (`--format html`, cartella `reports/html/`), autonomo e offline, con la spiegazione guidata inclusa quando richiesta.
 - **Confronto tra report** per seguire l'andamento del rischio nel tempo dopo le correzioni.
 
 ---
