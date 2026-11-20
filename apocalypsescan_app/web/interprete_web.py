@@ -32,6 +32,7 @@ import textwrap
 from typing import Callable, NamedTuple
 
 from .. import menu_stile as st
+from .esito_pt import esito_di, fonte_di
 from ..config import (
     EPSS_PROBABILITY, IMPACT_SCALE, OWASP, PROBABILITY_SCALE, RISK_THRESHOLDS,
     WEB_TECH_CPE, WEB_VA_COPERTE, WEB_VA_FUORI_PORTATA,
@@ -293,6 +294,93 @@ SCHEDE = {
         _attacco_cve,
         "Aggiorna {servizio} all'ultima versione supportata o applica le patch del fornitore; "
         "controlla su nvd.nist.gov quali CVE riguardano davvero la tua installazione."),
+
+    # --- Analisi interna (apocalypse inspect): fonte "interno" ---
+    "db_accesso": Scheda(
+        "Accesso al database senza password",
+        "Nel database c'è un accesso che non chiede una password ({elemento}): utente senza "
+        "password, utente anonimo o regola 'trust'.",
+        "Chi raggiunge il database (un'altra applicazione sulla macchina, un processo compromesso o, "
+        "se la porta è aperta, chiunque in rete) entra senza credenziali e legge o modifica i dati.",
+        "Assegna una password robusta a ogni utente (o usa l'autenticazione via socket per gli "
+        "amministratori locali), elimina gli utenti anonimi e sostituisci 'trust' con scram-sha-256."),
+    "db_privilegi": Scheda(
+        "Privilegi del database troppo ampi",
+        "L'utente {elemento} ha privilegi su tutto il database server (globali, SUPERUSER o "
+        "simili), non solo sul database dell'applicazione.",
+        "Se l'applicazione viene compromessa (es. con una SQL injection) l'attaccante eredita quei "
+        "privilegi: legge tutti i database, crea utenti, con FILE o COPY ... PROGRAM legge file o "
+        "esegue comandi sul server.",
+        "Applica il minimo privilegio: all'utente dell'applicazione solo SELECT/INSERT/UPDATE/DELETE "
+        "sul suo database; gli amministratori collegabili solo da localhost."),
+    "db_configurazione": Scheda(
+        "Configurazione del database",
+        "Un'impostazione del database indebolisce la sicurezza: {dettaglio}.",
+        "Un database raggiungibile dalla rete o senza cifratura espone credenziali e dati a chi può "
+        "intercettare il traffico o tentare l'accesso direttamente alla porta.",
+        "Limita l'ascolto a localhost o alla rete interna (bind-address / listen_addresses), rendi "
+        "obbligatorio TLS per le connessioni di rete e disattiva le funzioni non necessarie."),
+    "db_esposto": Scheda(
+        "Database esposto sulla rete",
+        "Il processo del database ascolta su tutte le interfacce ({elemento}): la porta è "
+        "raggiungibile da qualunque macchina arrivi al server.",
+        "L'attaccante prova direttamente le credenziali sulla porta del database (o sfrutta una "
+        "vulnerabilità del server di database) senza passare dall'applicazione.",
+        "Fai ascoltare il database solo su 127.0.0.1 (o sulla rete interna) e blocca la porta nel "
+        "firewall verso l'esterno."),
+    "app_root": Scheda(
+        "Applicazione eseguita come root",
+        "Il processo dell'applicazione ({elemento}) gira con l'utente root.",
+        "Una qualunque vulnerabilità che esegue codice nell'applicazione (RCE, SSTI, "
+        "deserializzazione) dà all'attaccante il controllo completo della macchina, non solo "
+        "dell'applicazione.",
+        "Esegui l'applicazione con un utente dedicato senza privilegi (es. www-data o un utente di "
+        "servizio), con accesso in scrittura solo alle cartelle necessarie."),
+    "servizio_superfluo": Scheda(
+        "Servizio non necessario attivo",
+        "Sulla macchina è attivo un servizio che di norma non serve a un server web ({elemento}).",
+        "Ogni servizio in più è una porta d'ingresso in più: versioni vecchie, configurazioni di "
+        "default o protocolli in chiaro sono bersagli facili.",
+        "Disattiva e disabilita il servizio se non serve (systemctl disable --now); se serve, "
+        "aggiornalo e limitane l'accesso."),
+    "segreto_codice": Scheda(
+        "Credenziale scritta nel codice",
+        "Nel codice sorgente c'è una password o una chiave scritta in chiaro ({elemento}). Il "
+        "valore non è riportato nel report.",
+        "Chi ottiene il codice (repository, backup, un file esposto dal web server, un ex "
+        "collaboratore) ottiene anche la credenziale e la usa per accedere ai sistemi.",
+        "Sposta il segreto in una variabile d'ambiente o in un gestore di segreti, cambialo (va "
+        "considerato compromesso) e toglilo anche dalla storia del repository."),
+    "codice_statico": Scheda(
+        "Problema rilevato dall'analisi statica",
+        "L'analisi statica del codice ha trovato un costrutto rischioso ({dettaglio}).",
+        "Se il costrutto riceve input dell'utente, l'attaccante può sfruttarlo: per esempio una "
+        "query costruita con stringhe porta alla SQL injection, un comando di shell alla command "
+        "injection.",
+        "Controlla le righe indicate nel contesto: se l'input può arrivare dall'utente, correggi "
+        "(query parametrizzate, niente shell, librerie sicure); altrimenti documenta perché è sicuro."),
+    "file_sensibile": Scheda(
+        "File sensibile accessibile",
+        "Un file che può contenere segreti ({elemento}) è leggibile da tutti gli utenti della "
+        "macchina o si trova dentro la cartella del codice.",
+        "Un altro utente della macchina, o il web server se la cartella è servita, legge il file "
+        "e ottiene password, chiavi o dati.",
+        "Restringi i permessi (600 o 640, proprietario l'utente dell'applicazione) e tieni i file "
+        "di configurazione e i backup fuori dalla cartella pubblicata dal web server."),
+    "ws_header": Scheda(
+        "Header di sicurezza non configurati nel web server",
+        "La configurazione del web server non imposta alcuni header di sicurezza ({dettaglio}).",
+        "Senza questi header il browser non applica protezioni aggiuntive contro XSS, clickjacking "
+        "e downgrade a HTTP: un'altra vulnerabilità diventa più facile da sfruttare.",
+        "Aggiungi gli header nella configurazione del web server (add_header in nginx, Header "
+        "always set in Apache) oppure verifica che li imposti l'applicazione."),
+    "ws_configurazione": Scheda(
+        "Configurazione del web server",
+        "Un'impostazione del web server dà informazioni o funzioni inutili a un attaccante "
+        "({dettaglio}).",
+        "L'attaccante usa le informazioni (versione, firma) per cercare exploit mirati, o il metodo "
+        "TRACE per attacchi di Cross-Site Tracing.",
+        "Imposta ServerSignature Off e TraceEnable Off (Apache), server_tokens off (nginx)."),
 }
 
 # Testo generico dell'attacco per categoria OWASP: per i finding di un tipo senza scheda
@@ -396,8 +484,34 @@ def tipo_finding(f):
     elif fonte == "http":
         if "https" in voce:
             return "no_https"
-    elif fonte == "cve":
-        return "cve"
+    elif fonte in ("cve", "pacchetti"):
+        if fonte == "cve" or f.get("impact") is not None:
+            return "cve"
+    elif fonte == "database":
+        if re.search(r"senza password|anonimo|trust|password in chiaro", voce):
+            return "db_accesso"
+        if re.search(r"privilegi|superuser|bypassrls|root collegabile", voce):
+            return "db_privilegi"
+        return "db_configurazione"
+    elif fonte == "servizi":
+        if "database in ascolto" in voce:
+            return "db_esposto"
+        if "superfluo" in voce:
+            return "servizio_superfluo"
+    elif fonte == "processi":
+        return "app_root"
+    elif fonte in ("bandit", "semgrep"):
+        return "segreto_codice" if "credenziale" in voce else "codice_statico"
+    elif fonte == "file":
+        return "file_sensibile"
+    elif fonte == "webserver":
+        if "versione" in voce:
+            return "tecnologia"
+        if "tls obsoleto" in voce:
+            return "tls_obsoleto"
+        if "header" in voce:
+            return "ws_header"
+        return "ws_configurazione"
 
     # ultima possibilità (anche per fonti future, es. un controllo CSRF passivo): la voce
     for espressione, tipo in _TIPI_DA_TESTO:
@@ -409,7 +523,8 @@ def tipo_finding(f):
 class _Campi(dict):
     """Segnaposto mancanti -> testo neutro, così un finding incompleto non rompe la scheda."""
     NEUTRI = {"parametro": "indicato", "cookie": "indicato", "url": "indicata",
-              "dettaglio": "vedi l'evidenza", "servizio": "il componente", "cve": "vedi il report"}
+              "dettaglio": "vedi l'evidenza", "servizio": "il componente", "cve": "vedi il report",
+              "elemento": "vedi il report"}
 
     def __missing__(self, chiave):
         return self.NEUTRI.get(chiave, "")
@@ -441,6 +556,8 @@ def campi_finding(f):
         campi["servizio"] = f["service"]
     if f.get("references"):
         campi["cve"] = elenco_cve(f["references"])
+    if f.get("elemento"):
+        campi["elemento"] = f["elemento"]
     return campi
 
 
@@ -547,8 +664,11 @@ def spiega(f):
         "nome_tipo": nome,
         "fonte": f.get("source"),
         "attivo": f.get("source") == "pentest",
+        "origine": ("interno" if fonte_di(f) == "interno" else
+                    "attivo" if f.get("source") == "pentest" else "passivo"),
+        "esito_pt": esito_di(f),
         "owasp": sigla_owasp(f),
-        "url": f.get("url") or f.get("target"),
+        "url": f.get("elemento") or f.get("url") or f.get("target"),
         "titolo": f.get("item"),
         "livello": f.get("level"),
         "score": f.get("score"),
@@ -634,12 +754,30 @@ def _punti_chiave(model, scored, spiegazioni, da_verificare):
     return punti
 
 
+def _limiti_interni(meta):
+    """Limiti dell'analisi interna: le voci non eseguite o eseguite in parte."""
+    meta_int = meta.get("interno")
+    if not meta_int:
+        return []
+    limiti = []
+    if meta_int.get("sudo") is False:
+        limiti.append("Analisi interna senza sudo: processi degli altri utenti e parte della "
+                      "configurazione non sono stati letti.")
+    for voce, st in (meta_int.get("voci") or {}).items():
+        if st.get("stato") != "eseguito":
+            limiti.append(f"Analisi interna, {voce}: {st.get('stato')}"
+                          + (f" ({st['dettaglio']})" if st.get("dettaglio") else "") + ".")
+    return limiti
+
+
 def _limiti(model, scored):
     """Che cosa questa scansione non ha controllato (l'avvertenza finale la aggiunge
     interpreta_web)."""
     meta = model.get("meta") or {}
     pentest = meta.get("pentest")
-    limiti = []
+    limiti = _limiti_interni(meta)
+    if not meta.get("analisi_web", True):
+        return limiti      # analisi solo interna: i limiti della parte web non si applicano
 
     if meta.get("http_error"):
         limiti.append(f"La richiesta HTTP non è riuscita ({meta['http_error']}): header, cookie e "
@@ -752,7 +890,9 @@ def _sottotitolo(s):
     parti.append(s["nome_tipo"])
     if s["owasp"]:
         parti.append(nome_owasp(s["owasp"]))
-    parti.append("attivo" if s["attivo"] else "passivo")
+    parti.append(s.get("origine") or ("attivo" if s["attivo"] else "passivo"))
+    if s.get("esito_pt"):
+        parti.append(f"Esito PT: {s['esito_pt']}")
     return " · ".join(parti)
 
 

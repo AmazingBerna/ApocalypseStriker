@@ -77,10 +77,13 @@ def _finding_attivi(con_csrf_idor=False):
 def _modello(con_csrf_idor=False):
     ricognizione = _ricognizione()
     findings = web_risk.valuta_recon(ricognizione) + _finding_attivi(con_csrf_idor)
-    model = web_report.build_web_model(ricognizione, findings, mode=web_report.MODE_VAPT)
+    meta_pt = {"eseguito": True, "crawl": True, "pagine": 3, "punti_input": 9,
+               "richieste": 120, "troncato": False,
+               "categorie": dict(pentest.PT_CATEGORIE_TESTATE),
+               "classi_provate": {"sqli": 9, "xss": 9, "cmdi": 9, "ssti": 9, "lfi": 9,
+                                  "redirect": 1, "exposed": 1}}
+    model = web_report.build_web_model(ricognizione, findings, mode=web_report.MODE_VAPT,
+                                       pentest=meta_pt)
     model["meta"]["autorizzazione"] = {"ambiente": "test", "confermata_il": "2026-11-17T10:00:00",
                                        "modo": "interattiva"}
-    model["meta"]["pentest"] = {"eseguito": True, "crawl": True, "pagine": 3, "punti_input": 9,
-                                "richieste": 120, "troncato": False,
-                                "categorie": dict(pentest.PT_CATEGORIE_TESTATE)}
     return model

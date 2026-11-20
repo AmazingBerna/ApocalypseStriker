@@ -10,7 +10,10 @@ from datetime import datetime
 from ..config import (IMPACT_SCALE, OWASP, PROBABILITY_SCALE, WEB_VA_COPERTE,
                       WEB_VA_FUORI_PORTATA)
 from ..risk import risk_level
-from .common import SCORED_LEVELS, percent, thresholds_text
+from ..interno.analisi import VOCI as VOCI_INTERNE
+from ..web.esito_pt import esito_di, fonte_di
+from .common import (SCORED_LEVELS, conteggi_fonte, elemento, percent, righe_esiti,
+                     thresholds_text)
 
 
 def _cell(value):
@@ -36,6 +39,8 @@ def _dettaglio(f):
         tags.append(f"[EPSS {percent(f['epss'])}]")
     if f.get("probability_basis") == "cvss":
         tags.append("[probabilità da CVSS]")
+    if f.get("esito_pt_nota"):
+        tags.append(f"*Esito PT: {f['esito_pt_nota']}.*")
     return " ".join(tags + [f["reason"]])
 
 
@@ -51,7 +56,9 @@ def _stato_cve(t):
 
 
 def _intestazione(lines, meta):
-    lines.append("# Report Automatico di VAPT Web\n")
+    web = meta.get("analisi_web", True)
+    lines.append("# Report Automatico di VAPT Web\n" if web else
+                 "# Report Automatico di Analisi Interna\n")
     data = datetime.fromisoformat(meta["generated_at"]).strftime("%Y-%m-%d %H:%M")
     lines.append(f"**Target analizzato:** {meta['target']}  ")
     lines.append(f"**Data e ora:** {data}  ")
@@ -64,7 +71,14 @@ def _intestazione(lines, meta):
     else:
         lines.append("**Ambiente / autorizzazione:** non registrati (report generato fuori dal flusso standard)  ")
     lines.append(f"**Host:** {meta['host']}  ")
-    if meta.get("http_error"):
+    interna = meta.get("autorizzazione_interna")
+    if interna:
+        confermata = datetime.fromisoformat(interna["confermata_il"]).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"**Analisi interna:** {interna['host']} come `{interna['utente']}`, "
+                     f"autorizzata il {confermata} ({interna['modo']})  ")
+    if not web:
+        pass        # niente stato HTTP: l'analisi è solo interna
+    elif meta.get("http_error"):
         lines.append(f"**Stato HTTP:** richiesta non riuscita ({meta['http_error']})  ")
     else:
         stato = str(meta.get("http_status"))
@@ -144,22 +158,69 @@ def _ricognizione(lines, model):
         lines.append("")
 
 
+def _interno(lines, model):
+    """Sezione dell'analisi interna: cosa è stato letto, con quali permessi, e lo stato di
+    ogni voce (eseguita, parziale, non disponibile con il motivo)."""
+    meta_int = (model.get("meta") or {}).get("interno")
+    if not meta_int:
+        return
+    lines.append("## Analisi interna (accesso autorizzato, sola lettura)\n")
+    lines.append("Analisi della macchina che ospita l'applicazione, fatta dall'interno con "
+                 "credenziali autorizzate. Solo comandi di **lettura** da un elenco ammesso: nessuna "
+                 "modifica, installazione o riavvio. Le credenziali e i valori dei segreti non "
+                 "compaiono nel report.\n")
+    sudo = {True: "disponibile", False: "non disponibile (alcune voci sono parziali)",
+            None: "non verificato"}[meta_int.get("sudo")]
+    lines.append("| Voce | Valore |")
+    lines.append("|---|---|")
+    lines.append(f"| Macchina | {_cell(meta_int.get('bersaglio') or meta_int.get('host'))} |")
+    lines.append(f"| Connessione | {_cell(meta_int.get('connessione'))} |")
+    lines.append(f"| sudo | {sudo} |")
+    lines.append(f"| Codice analizzato | {_cell(meta_int.get('codice') or 'non indicato')} |")
+    lines.append(f"| Comandi eseguiti | {_cell(meta_int.get('comandi_eseguiti', 0))} |")
+    lines.append("")
+    lines.append("| Controllo | Stato | Dettaglio |")
+    lines.append("|---|---|---|")
+    for voce, st in (meta_int.get("voci") or {}).items():
+        stato = st.get("stato")
+        if stato != "eseguito":
+            stato = f"**{stato}**"
+        lines.append(f"| {_cell(VOCI_INTERNE.get(voce, voce))} | {stato} | "
+                     f"{_cell(st.get('dettaglio') or '-')} |")
+    lines.append("")
+
+
 def _tabella_rischi(lines, findings):
     scored = [f for f in findings if f["impact"] is not None]
     info_count = len(findings) - len(scored)
 
     lines.append("## Tabella dei rischi (Rischio = Impatto x Probabilità)\n")
-    lines.append("Finding della ricognizione, valutati con lo stesso modello della serie e "
-                 "ordinati dal rischio più alto. Impatto e probabilità su scala 1-5, "
-                 f"rischio da 1 a 25 ({thresholds_text()}).\n")
+    lines.append("Un'unica tabella per tutti i finding: analisi **esterna** (ricognizione passiva e "
+                 "penetration testing) e analisi **interna** della macchina, valutati con lo stesso "
+                 "modello e ordinati dal rischio più alto. Impatto e probabilità su scala 1-5, "
+                 f"rischio da 1 a 25 ({thresholds_text()}). La colonna **Fonte** dice da quale analisi "
+                 "viene il finding, la colonna **Esito PT** l'esito della verifica di penetration "
+                 "testing.\n")
 
     lines.append("### Riepilogo per livello\n")
-    lines.append("| Livello | Finding |")
-    lines.append("|---|---:|")
+    lines.append("| Livello | Esterni | Interni | Totale |")
+    lines.append("|---|---:|---:|---:|")
     for level in SCORED_LEVELS:
-        lines.append(f"| {level} | {sum(1 for f in scored if f['level'] == level)} |")
-    lines.append(f"| Informativo (non valutati) | {info_count} |")
+        esterni, interni = conteggi_fonte(findings, level)
+        lines.append(f"| {level} | {esterni} | {interni} | {esterni + interni} |")
+    info_interni = sum(1 for f in findings if f["impact"] is None and fonte_di(f) == "interno")
+    lines.append(f"| Informativo (non valutati) | {info_count - info_interni} | {info_interni} | "
+                 f"{info_count} |")
     lines.append("")
+
+    esiti = righe_esiti(findings)
+    if esiti:
+        lines.append("### Esito della verifica di penetration testing\n")
+        lines.append("| Esito PT | Finding | Significato |")
+        lines.append("|---|---:|---|")
+        for esito, n, significato in esiti:
+            lines.append(f"| {esito} | {n} | {significato} |")
+        lines.append("")
 
     lines.append("### Matrice di rischio\n")
     lines.append("Ogni cella riporta il punteggio (I x P) e, in grassetto, quanti finding vi ricadono.\n")
@@ -177,24 +238,26 @@ def _tabella_rischi(lines, findings):
 
     lines.append("### Elenco dei finding\n")
     if not scored:
-        lines.append("Nessun finding valutabile: la ricognizione passiva non ha rilevato debolezze di "
-                     "**configurazione**. Non dice nulla sulle vulnerabilità che richiedono payload: "
-                     "vedi *Fuori portata del Vulnerability Assessment passivo*.\n")
+        lines.append("Nessun finding valutabile: le analisi eseguite non hanno rilevato debolezze. "
+                     "L'assenza di finding non è una garanzia: vedi la portata dell'analisi.\n")
     else:
-        lines.append("| # | OWASP | Finding | URL | Impatto | Probabilità | Rischio | Livello | Evidenza | Dettaglio |")
-        lines.append("|---:|---|---|---|---:|---:|---:|---|---|---|")
+        lines.append("| # | Fonte | OWASP | Finding | Elemento | Impatto | Probabilità | Rischio | Livello | "
+                     "Esito PT | Evidenza | Dettaglio |")
+        lines.append("|---:|---|---|---|---|---:|---:|---:|---|---|---|---|")
         for n, f in enumerate(scored, 1):
-            lines.append(f"| {n} | {_cell(f.get('owasp'))} | {_cell(f['item'])} | {_cell(f.get('url'))} | "
-                         f"{_risk_cells(f)} | {_cell(f.get('evidence'))} | {_cell(_dettaglio(f))} |")
+            lines.append(f"| {n} | {fonte_di(f)} | {_cell(f.get('owasp'))} | {_cell(f['item'])} | "
+                         f"{_cell(elemento(f))} | {_risk_cells(f)} | {esito_di(f)} | "
+                         f"{_cell(f.get('evidence'))} | {_cell(_dettaglio(f))} |")
         lines.append("")
 
     informativi = [f for f in findings if f["impact"] is None]
     if informativi:
         lines.append("### Finding informativi\n")
-        lines.append("| Finding | Dettaglio |")
-        lines.append("|---|---|")
+        lines.append("| Fonte | Finding | Elemento | Esito PT | Dettaglio |")
+        lines.append("|---|---|---|---|---|")
         for f in informativi:
-            lines.append(f"| {_cell(f['item'])} | {_cell(f['reason'])} |")
+            lines.append(f"| {fonte_di(f)} | {_cell(f['item'])} | {_cell(elemento(f))} | "
+                         f"{esito_di(f)} | {_cell(_dettaglio(f))} |")
         lines.append("")
 
 
@@ -276,13 +339,19 @@ def _note(lines):
 def render(model):
     """Restituisce il report Markdown web come stringa."""
     lines = []
+    web = model["meta"].get("analisi_web", True)
     _intestazione(lines, model["meta"])
     lines.append("---\n")
-    _ricognizione(lines, model)
-    lines.append("\n---\n")
+    if web:
+        _ricognizione(lines, model)
+        lines.append("\n---\n")
+    if model["meta"].get("interno"):
+        _interno(lines, model)
+        lines.append("\n---\n")
     _tabella_rischi(lines, model["findings"])
     lines.append("\n---\n")
-    _portata(lines, model)
-    lines.append("\n---\n")
+    if web:
+        _portata(lines, model)
+        lines.append("\n---\n")
     _note(lines)
     return "\n".join(lines)

@@ -3,6 +3,7 @@
   apocalypse attack               apre il menù interattivo (apocalypsescan_app.menu_web)
   apocalypse attack <url>         esegue il Vulnerability Assessment web su <url>
   apocalypse attack <url> --help  tutte le opzioni della scansione web
+  apocalypse inspect [opzioni]    analisi INTERNA della macchina (SSH o locale, sola lettura)
 
 `apocalypse` è il comando della serie Apocalypse (la versione precedente si lanciava con
 `apocalypse scan`); questa terza versione aggiunge il sottocomando `attack`. Registrato
@@ -18,11 +19,15 @@ Uso:
   apocalypse attack               apre il menù interattivo (guida e scansione guidata)
   apocalypse attack <url>         esegue il Vulnerability Assessment passivo su <url>
   apocalypse attack <url> --help  tutte le opzioni della scansione web
+  apocalypse inspect [opzioni]    analisi INTERNA della macchina (SSH o locale, sola lettura)
+  apocalypse inspect --help       tutte le opzioni dell'analisi interna
 
 Esempi:
   apocalypse attack
   apocalypse attack https://badssl.com
   apocalypse attack https://esempio.it --env produzione --format md,json,csv
+  apocalypse inspect --host 192.0.2.10 --user auditor --key ~/.ssh/id_ed25519 --code /var/www/app
+  apocalypse attack https://esempio.it --pentest --inspect --host 192.0.2.10 --user auditor
 """
 
 
@@ -40,6 +45,10 @@ def main(argv=None):
             return menu_principale()
         from apocalypsescan_app.web.web_report import main as web_main
         return web_main(rest)
+
+    if argv and argv[0] == "inspect":
+        from apocalypsescan_app.interno.comando import main as inspect_main
+        return inspect_main(argv[1:])
 
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(USO)

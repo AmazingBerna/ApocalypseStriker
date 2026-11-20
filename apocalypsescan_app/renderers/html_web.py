@@ -16,11 +16,18 @@ from html import escape
 from ..config import (IMPACT_SCALE, OWASP, PROBABILITY_SCALE, WEB_VA_COPERTE,
                       WEB_VA_FUORI_PORTATA)
 from ..risk import risk_level
-from .common import SCORED_LEVELS, percent, thresholds_text
+from ..interno.analisi import VOCI as VOCI_INTERNE
+from ..web.esito_pt import esito_di, fonte_di
+from .common import (SCORED_LEVELS, conteggi_fonte, elemento, percent, righe_esiti,
+                     thresholds_text)
 
 # Classe CSS di ogni livello di rischio
 CLASSE_LIVELLO = {"Critico": "critico", "Alto": "alto", "Medio": "medio", "Basso": "basso",
                   "Informativo": "info", "Nessuno": "info"}
+# Classe CSS di ogni esito della verifica di PT e di ogni fonte
+CLASSE_ESITO = {"confermato": "confermato", "non confermato": "non-confermato",
+                "da verificare": "da-verificare", "non testato": "non-testato",
+                "non applicabile": "non-applicabile"}
 
 CSS = """
 :root {
@@ -61,6 +68,16 @@ code { background: var(--codice); padding: 1px 4px; border-radius: 4px; font-siz
 .livello.medio { background: var(--medio); } .livello.basso { background: var(--basso); }
 .livello.info { background: var(--info); }
 .kev { color: var(--critico); font-weight: 700; }
+.esito, .fonte { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.82rem;
+  white-space: nowrap; border: 1px solid var(--bordo); }
+.esito.confermato { background: var(--critico); color: #fff; border-color: var(--critico); font-weight: 600; }
+.esito.da-verificare { border: 1px dashed var(--alto); color: var(--alto); font-weight: 600; }
+.esito.non-confermato { color: var(--basso); border-color: var(--basso); }
+.esito.non-testato { color: var(--tenue); }
+.esito.non-applicabile { color: var(--tenue); border-style: dotted; }
+.fonte.esterno { background: var(--accento-tenue); color: var(--accento); border-color: var(--accento); }
+.fonte.interno { background: var(--codice); color: var(--testo); }
+.nota-esito { display: block; color: var(--tenue); font-size: 0.85rem; margin-bottom: 2px; }
 table.matrice td { text-align: center; white-space: nowrap; }
 table.matrice td.critico { background: color-mix(in srgb, var(--critico) 22%, transparent); }
 table.matrice td.alto { background: color-mix(in srgb, var(--alto) 22%, transparent); }
@@ -86,6 +103,16 @@ footer { margin-top: 48px; color: var(--tenue); font-size: 0.85rem; }
 def _e(valore):
     """Testo sicuro in HTML; None diventa un trattino."""
     return "-" if valore is None else escape(str(valore))
+
+
+def _esito(f):
+    e = esito_di(f)
+    return f'<span class="esito {CLASSE_ESITO.get(e, "non-testato")}">{_e(e)}</span>'
+
+
+def _fonte(f):
+    fonte = fonte_di(f)
+    return f'<span class="fonte {_e(fonte)}">{_e(fonte)}</span>'
 
 
 def _livello(livello):
@@ -127,7 +154,16 @@ def _intestazione(meta):
         dati.append(("Ambiente / autorizzazione",
                      "non registrati (report generato fuori dal flusso standard)"))
     dati.append(("Host", _e(meta.get("host"))))
-    if meta.get("http_error"):
+    web = meta.get("analisi_web", True)
+    interna = meta.get("autorizzazione_interna")
+    if interna:
+        dati.append(("Analisi interna", f"{_e(interna.get('host'))} come <code>"
+                                        f"{_e(interna.get('utente'))}</code>, autorizzata il "
+                                        f"{_data(interna.get('confermata_il'))} "
+                                        f"({_e(interna.get('modo'))})"))
+    if not web:
+        pass        # niente stato HTTP: l'analisi è solo interna
+    elif meta.get("http_error"):
         dati.append(("Stato HTTP", f"richiesta non riuscita ({_e(meta['http_error'])})"))
     else:
         stato = _e(meta.get("http_status"))
@@ -140,7 +176,8 @@ def _intestazione(meta):
         dati.append(("Stato HTTP", stato))
     dati.append(("Strumento", _e(meta.get("tool"))))
     righe = "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in dati)
-    return ('<header class="testata"><h1>Report Automatico di VAPT Web</h1>'
+    titolo = "Report Automatico di VAPT Web" if web else "Report Automatico di Analisi Interna"
+    return (f'<header class="testata"><h1>{titolo}</h1>'
             '<div class="tenue">ApocalypseStriker · Vulnerability Assessment + Penetration Testing</div>'
             f'</header><dl class="dati">{righe}</dl>')
 
@@ -218,31 +255,82 @@ def _dettaglio(f):
         tag.append(f"[EPSS {_e(percent(f['epss']))}]")
     if f.get("probability_basis") == "cvss":
         tag.append("[probabilità da CVSS]")
-    return " ".join(tag + [_e(f.get("reason"))])
+    nota = (f'<span class="nota-esito">Esito PT: {_e(f["esito_pt_nota"])}.</span>'
+            if f.get("esito_pt_nota") else "")
+    return nota + " ".join(tag + [_e(f.get("reason"))])
+
+
+def _interno(model):
+    """Sezione dell'analisi interna (stesso contenuto del Markdown)."""
+    meta_int = (model.get("meta") or {}).get("interno")
+    if not meta_int:
+        return ""
+    sudo = {True: "disponibile", False: "non disponibile (alcune voci sono parziali)",
+            None: "non verificato"}[meta_int.get("sudo")]
+    parti = ["<h2>Analisi interna (accesso autorizzato, sola lettura)</h2>",
+             "<p>Analisi della macchina che ospita l'applicazione, fatta dall'interno con credenziali "
+             "autorizzate. Solo comandi di <strong>lettura</strong> da un elenco ammesso: nessuna "
+             "modifica, installazione o riavvio. Le credenziali e i valori dei segreti non compaiono "
+             "nel report.</p>",
+             _tabella(["Voce", "Valore"], [
+                 ("Macchina", _e(meta_int.get("bersaglio") or meta_int.get("host"))),
+                 ("Connessione", _e(meta_int.get("connessione"))),
+                 ("sudo", sudo),
+                 ("Codice analizzato", _e(meta_int.get("codice") or "non indicato")),
+                 ("Comandi eseguiti", _e(meta_int.get("comandi_eseguiti", 0)))])]
+    righe = []
+    for voce, st in (meta_int.get("voci") or {}).items():
+        stato = st.get("stato") or ""
+        classe = {"eseguito": "basso", "parziale": "medio"}.get(stato, "alto")
+        righe.append((_e(VOCI_INTERNE.get(voce, voce)),
+                      f'<span class="livello {classe}">{_e(stato)}</span>',
+                      _e(st.get("dettaglio") or "-")))
+    parti.append(_tabella(["Controllo", "Stato", "Dettaglio"], righe))
+    return "".join(parti)
 
 
 def _tabella_rischi(findings):
     scored = [f for f in findings if f.get("impact") is not None]
     informativi = [f for f in findings if f.get("impact") is None]
     parti = ["<h2>Tabella dei rischi (Rischio = Impatto x Probabilità)</h2>",
-             "<p>Finding valutati con lo stesso modello della serie e ordinati dal rischio più alto. "
-             "Impatto e probabilità su scala 1-5, rischio da 1 a 25 "
-             f"({_e(thresholds_text())}).</p>",
+             "<p>Un'unica tabella per tutti i finding: analisi <strong>esterna</strong> (ricognizione "
+             "passiva e penetration testing) e analisi <strong>interna</strong> della macchina, "
+             "valutati con lo stesso modello e ordinati dal rischio più alto. Impatto e probabilità "
+             f"su scala 1-5, rischio da 1 a 25 ({_e(thresholds_text())}). La colonna "
+             "<strong>Fonte</strong> dice da quale analisi viene il finding, la colonna "
+             "<strong>Esito PT</strong> l'esito della verifica di penetration testing.</p>",
              "<h3>Riepilogo per livello</h3>"]
-    righe = [(_livello(lv), str(sum(1 for f in scored if f["level"] == lv))) for lv in SCORED_LEVELS]
-    righe.append(("Informativo (non valutati)", str(len(informativi))))
-    parti.append(_tabella(["Livello", "Finding"], righe, ["", "num"]))
+    righe = []
+    for lv in SCORED_LEVELS:
+        esterni, interni = conteggi_fonte(findings, lv)
+        righe.append((_livello(lv), str(esterni), str(interni), str(esterni + interni)))
+    info_interni = sum(1 for f in informativi if fonte_di(f) == "interno")
+    righe.append(("Informativo (non valutati)", str(len(informativi) - info_interni),
+                  str(info_interni), str(len(informativi))))
+    parti.append(_tabella(["Livello", "Esterni", "Interni", "Totale"], righe,
+                          ["", "num", "num", "num"]))
+    esiti = righe_esiti(findings)
+    if esiti:
+        parti.append("<h3>Esito della verifica di penetration testing</h3>")
+        parti.append(_tabella(
+            ["Esito PT", "Finding", "Significato"],
+            [(f'<span class="esito {CLASSE_ESITO[e]}">{_e(e)}</span>', str(n), _e(s))
+             for e, n, s in esiti], ["", "num", ""]))
 
     parti.append("<h3>Matrice di rischio</h3>")
     parti.append('<p class="tenue">Ogni cella riporta il punteggio (I x P) e, in grassetto, '
-                 "quanti finding vi ricadono.</p>")
+                 "quanti finding vi ricadono (esterni + interni); passando sopra la cella si vede "
+                 "la ripartizione per fonte.</p>")
     righe = []
     for i in range(5, 0, -1):
         celle = [f"<strong>{i} {_e(IMPACT_SCALE[i])}</strong>"]
         for p in range(1, 6):
-            n = sum(1 for f in scored if f["impact"] == i and f["probability"] == p)
+            cella = [f for f in scored if f["impact"] == i and f["probability"] == p]
+            n = len(cella)
+            interni = sum(1 for f in cella if fonte_di(f) == "interno")
             punteggio = i * p
-            testo = f"{punteggio} {risk_level(punteggio)[0]}" + (f" · <strong>{n}</strong>" if n else "")
+            testo = f"{punteggio} {risk_level(punteggio)[0]}" + (
+                f' · <strong title="{n - interni} esterni, {interni} interni">{n}</strong>' if n else "")
             celle.append((testo, CLASSE_LIVELLO.get(risk_level(punteggio), "")))
         righe.append(celle)
     testa = "".join(f"<th>{p} {_e(PROBABILITY_SCALE[p])}</th>" for p in range(1, 6))
@@ -254,25 +342,27 @@ def _tabella_rischi(findings):
 
     parti.append("<h3>Elenco dei finding</h3>")
     if not scored:
-        parti.append("<p>Nessun finding valutabile: la ricognizione passiva non ha rilevato debolezze di "
-                     "<strong>configurazione</strong>. Non dice nulla sulle vulnerabilità che richiedono "
-                     "payload: vedi <em>Portata dell'analisi</em>.</p>")
+        parti.append("<p>Nessun finding valutabile: le analisi eseguite non hanno rilevato debolezze. "
+                     "L'assenza di finding non è una garanzia: vedi la portata dell'analisi.</p>")
     else:
         righe = []
         for n, f in enumerate(scored, 1):
-            righe.append((str(n), _e(f.get("owasp")), _e(f.get("item")), f"<code>{_e(f.get('url'))}</code>",
+            righe.append((str(n), _fonte(f), _e(f.get("owasp")), _e(f.get("item")),
+                          f"<code>{_e(elemento(f))}</code>",
                           str(f["impact"]), str(f["probability"]), f"<strong>{f['score']}</strong>",
-                          _livello(f["level"]), f"<code>{_e(f.get('evidence'))}</code>", _dettaglio(f)))
+                          _livello(f["level"]), _esito(f), f"<code>{_e(f.get('evidence'))}</code>",
+                          _dettaglio(f)))
         parti.append(_tabella(
-            ["#", "OWASP", "Finding", "URL", "Impatto", "Probabilità", "Rischio", "Livello",
-             "Evidenza", "Dettaglio"], righe,
-            ["num", "", "", "lungo", "num", "num", "num", "", "lungo", "lungo"]))
+            ["#", "Fonte", "OWASP", "Finding", "Elemento", "Impatto", "Probabilità", "Rischio",
+             "Livello", "Esito PT", "Evidenza", "Dettaglio"], righe,
+            ["num", "", "", "", "lungo", "num", "num", "num", "", "", "lungo", "lungo"]))
 
     if informativi:
         parti.append("<h3>Finding informativi</h3>")
-        parti.append(_tabella(["Finding", "Dettaglio"],
-                              [(_e(f.get("item")), _e(f.get("reason"))) for f in informativi],
-                              ["", "lungo"]))
+        parti.append(_tabella(["Fonte", "Finding", "Elemento", "Esito PT", "Dettaglio"],
+                              [(_fonte(f), _e(f.get("item")), f"<code>{_e(elemento(f))}</code>",
+                                _esito(f), _dettaglio(f)) for f in informativi],
+                              ["", "", "lungo", "", "lungo"]))
     return "".join(parti)
 
 
@@ -356,7 +446,10 @@ def _sottotitolo(s):
     parti.append(_e(s.get("nome_tipo")))
     if s.get("owasp"):
         parti.append(_e(OWASP.get(s["owasp"], s["owasp"])))
-    parti.append("attivo" if s.get("attivo") else "passivo")
+    parti.append(_e(s.get("origine") or ("attivo" if s.get("attivo") else "passivo")))
+    if s.get("esito_pt"):
+        parti.append(f'Esito PT: <span class="esito {CLASSE_ESITO.get(s["esito_pt"], "non-testato")}">'
+                     f'{_e(s["esito_pt"])}</span>')
     parti.append(f"<code>{_e(s.get('url'))}</code>")
     return " · ".join(parti)
 
@@ -418,11 +511,18 @@ def render(model, lettura=None):
     if lettura is not None:
         sezioni.append('<p class="nota">Questo report contiene anche la '
                        '<a href="#spiegazione">spiegazione guidata</a> dei risultati.</p>')
-    sezioni += [_ricognizione(model), _tabella_rischi(model.get("findings") or []), _portata(model)]
+    web = meta.get("analisi_web", True)
+    if web:
+        sezioni.append(_ricognizione(model))
+    if meta.get("interno"):
+        sezioni.append(_interno(model))
+    sezioni.append(_tabella_rischi(model.get("findings") or []))
+    if web:
+        sezioni.append(_portata(model))
     if lettura is not None:
         sezioni.append(_spiegazione(lettura))
     sezioni.append(_note())
-    titolo = f"VAPT web - {meta.get('target') or ''}".strip(" -")
+    titolo = f"{'VAPT web' if web else 'Analisi interna'} - {meta.get('target') or ''}".strip(" -")
     return ("<!doctype html>\n"
             '<html lang="it">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'

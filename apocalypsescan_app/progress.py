@@ -26,6 +26,12 @@ PHASE_WEIGHTS = {
     # molti payload (la fase più lunga del VAPT web quando richiesta)
     "web_crawl": 4,
     "web_pentest": 20,
+    # Analisi interna (inspect): pochi comandi via SSH; l'analisi statica (Bandit) è la più lenta
+    "int_processi": 2,
+    "int_database": 2,
+    "int_codice": 8,
+    "int_webserver": 1,
+    "int_pacchetti": 2,
 }
 
 RESET = "\033[0m"

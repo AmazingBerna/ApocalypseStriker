@@ -1,14 +1,14 @@
-"""Modello dei dati del report, indipendente dal formato di uscita.
+"""Schema comune dei finding, indipendente dal formato di uscita.
 
-build_report_model() raccoglie tutto ciò che serve ai renderer (Markdown, JSON, CSV, HTML)
-in un dizionario serializzabile in JSON così com'è: solo dict, list, str, int, bool e None.
+_normalize() porta ogni finding (web passivo, penetration testing, analisi interna) allo
+stesso schema FINDING_FIELDS; _assign_ids() gli dà un id stabile. Il modello è
+serializzabile in JSON così com'è: solo dict, list, str, int, bool e None.
+
+Il vecchio build_report_model() del report "host" (Nmap, Trivy, Lynis) è archiviato in
+docs/archivio/report_host/report_model_host.py.
 """
 import hashlib
 import re
-from datetime import datetime
-
-from .esposizione import applica as applica_esposizione
-from .risk import assess_host_risks, overall_host_risk, sort_findings
 
 # Campi di ogni finding, nell'ordine in cui compaiono nel modello
 FINDING_FIELDS = ("id", "source", "host", "port", "protocol", "target", "item", "service",
@@ -17,7 +17,13 @@ FINDING_FIELDS = ("id", "source", "host", "port", "protocol", "target", "item", 
                   "package", "network_vector", "exposure", "exposed_ports", "probability_bonus",
                   "confirmed_cves", "unconfirmed_cves",
                   # campi dei finding web (None per i finding host: Nmap, SSH, Lynis, Trivy)
-                  "owasp", "url", "evidence")
+                  "owasp", "url", "evidence",
+                  # fonte: "esterno" (recon/PT web) o "interno" (inspect); elemento: cosa è
+                  # interessato (porta, utente del DB, file:riga...). Aggiunti in fondo: chi
+                  # legge già il JSON trova tutti i campi di prima
+                  "fonte", "elemento",
+                  # esito della verifica di PT (web/esito_pt.py) e la sua spiegazione breve
+                  "esito_pt", "esito_pt_nota")
 
 
 def _slug(text):
@@ -71,6 +77,10 @@ def _normalize(f, host, target, port=None):
         "owasp": f.get("owasp"),
         "url": f.get("url"),
         "evidence": f.get("evidence"),
+        "fonte": f.get("fonte") or "esterno",
+        "elemento": f.get("elemento"),
+        "esito_pt": f.get("esito_pt"),
+        "esito_pt_nota": f.get("esito_pt_nota"),
         "key": f.get("key"),   # solo per l'id, non entra nel modello
     }
 
@@ -103,107 +113,3 @@ def _assign_ids(findings):
             n += 1
         used.add(candidate)
         f["id"] = candidate
-
-
-def _lynis_number(findings, item):
-    """Estrae un valore numerico dai finding informativi di Lynis (es. Hardening index)."""
-    for f in findings:
-        if f["source"] == "lynis" and f["item"] == item:
-            match = re.search(r"\d+", f["reason"])
-            if match:
-                return int(match.group())
-    return None
-
-
-def build_report_model(
-    hosts,
-    target,
-    vuln_scan,
-    lynis_findings=None,
-    lynis_meta=None,
-    system_info=None,
-    firewall=None,
-    ssh_results=None,
-    trivy_requested=False,
-    trivy_summary=None,
-    trivy_findings=None,
-    tools_status=None,
-    host_label="macchina locale",
-    mode="locale",
-    threat_intel=None,
-    listening=None,
-    trivy_inventory=None,
-    udp_scan=None,
-):
-    """Costruisce il modello del report a partire dai risultati delle scansioni.
-    threat_intel (KEV/EPSS) serve a valutare le CVE trovate da Nmap; None = valori fissi.
-    listening (servizi in ascolto) e trivy_inventory (pacchetti controllati da Trivy) servono a
-    esposizione.py per collegare porte e pacchetti; udp_scan è il numero di porte UDP
-    scansionate (None = scansione UDP non eseguita)."""
-    lynis_meta = lynis_meta or {}
-    lynis_findings = lynis_findings or []
-    ssh_results = ssh_results or {}
-    trivy_findings = trivy_findings or []
-
-    hosts = [{**h, "ports": [dict(p) for p in h["ports"]]} for h in hosts]
-    host_findings = {h["ip"]: assess_host_risks(h, threat_intel) for h in hosts}
-    # porte -> pacchetti, conferma delle CVE di Nmap, esposizione dei pacchetti di Trivy
-    exposure = applica_esposizione(hosts, host_findings, trivy_findings,
-                                   remota=mode.startswith("remota"), etichetta=host_label,
-                                   listening=listening, inventory=trivy_inventory,
-                                   intel=threat_intel)
-
-    combined = []
-    model_hosts = []
-    for host in hosts:
-        findings = sort_findings(host_findings[host["ip"]])
-        score, level = overall_host_risk(findings)
-        model_hosts.append({
-            "ip": host["ip"],
-            "hostname": host["hostname"],
-            "ports": host["ports"],
-            "overall_score": score,
-            "overall_risk": level,
-        })
-        combined += [_normalize(f, host["ip"], host["ip"]) for f in findings]
-    for endpoint, findings in ssh_results.items():
-        ip, port = _split_endpoint(endpoint)
-        combined += [_normalize(f, ip, endpoint, port) for f in findings]
-    combined += [_normalize(f, host_label, host_label) for f in trivy_findings]
-    combined += [_normalize(f, host_label, host_label) for f in lynis_findings]
-
-    all_findings = sort_findings(combined)
-    _assign_ids(all_findings)
-    all_findings = [{k: f[k] for k in FINDING_FIELDS} for f in all_findings]
-
-    return {
-        "meta": {
-            "target": str(target),
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "analyzed_host": host_label,
-            "mode": mode,
-            "vuln_scan": bool(vuln_scan),
-            "udp_scan": udp_scan,
-            "trivy_requested": bool(trivy_requested),
-            "tools": {name: (str(path) if path else None)
-                      for name, path in (tools_status or {}).items()},
-            "threat_intel": threat_intel.meta() if threat_intel is not None else None,
-        },
-        "system_info": system_info or "",
-        # output di iptables: {command, output}, oppure None se non eseguito o non riuscito
-        "firewall": dict(firewall) if firewall else None,
-        "hosts": model_hosts,
-        "exposure": exposure,
-        "findings": all_findings,
-        "summaries": {
-            "trivy": dict(trivy_summary) if trivy_summary is not None else None,
-            "lynis": {
-                "enabled": bool(lynis_meta.get("enabled")),
-                "report_file": str(lynis_meta["report_file"]) if lynis_meta.get("report_file") else None,
-                "log_file": str(lynis_meta["log_file"]) if lynis_meta.get("log_file") else None,
-                "hardening_index": _lynis_number(all_findings, "Hardening index"),
-                "tests_performed": _lynis_number(all_findings, "Tests performed"),
-            },
-            "ssh_audit": {"endpoints": list(ssh_results)},
-        },
-    }

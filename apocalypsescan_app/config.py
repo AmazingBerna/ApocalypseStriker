@@ -410,3 +410,141 @@ PT_REDIRECT_PARAMS = ("next", "url", "redirect", "redirect_uri", "redirect_url",
                       "goto", "out", "link", "target", "r", "u")
 # Host esterno usato come sonda per open redirect / SSRF (dominio di esempio riservato IANA)
 PT_PROBE_HOST = "example.org"
+
+# --- Esito PT: per ogni finding, l'esito della verifica del penetration testing ---
+ESITO_CONFERMATO = "confermato"            # il PT attivo ha dimostrato il problema
+ESITO_NON_CONFERMATO = "non confermato"    # il PT ha provato, ma non l'ha dimostrato
+ESITO_DA_VERIFICARE = "da verificare"      # candidato del PT, da controllare a mano (es. SSRF)
+ESITO_NON_TESTATO = "non testato"          # rilevato in modo passivo, nessun test attivo corrispondente
+ESITO_NON_APPLICABILE = "non applicabile"  # finding interno: l'analisi interna non è un PT esterno
+ESITI_PT = (ESITO_CONFERMATO, ESITO_NON_CONFERMATO, ESITO_DA_VERIFICARE, ESITO_NON_TESTATO,
+            ESITO_NON_APPLICABILE)
+ESITI_PT_DESCRIZIONE = {
+    ESITO_CONFERMATO: "il penetration testing attivo ha dimostrato il problema",
+    ESITO_NON_CONFERMATO: "il penetration testing ha provato, ma non ha dimostrato il problema",
+    ESITO_DA_VERIFICARE: "candidato segnalato dal penetration testing, da controllare a mano",
+    ESITO_NON_TESTATO: "rilevato in modo passivo, nessun test attivo corrispondente (o PT non eseguito)",
+    ESITO_NON_APPLICABILE: "finding dell'analisi interna: non è oggetto del penetration testing esterno",
+}
+# Collegamento tra finding PASSIVI e classi del test ATTIVO: (fonte del finding, espressione
+# sulla voce in minuscolo, classe del PT). Se la classe è stata provata, il finding passivo
+# prende l'esito reale (confermato / non confermato) invece di "non testato".
+# - CSP assente o debole: è la difesa del browser contro l'XSS, che il PT prova davvero;
+# - cookie senza HttpOnly: il rischio concreto è il furto del cookie con un XSS.
+# Gli altri finding passivi (HSTS, X-Frame-Options, TLS, CVE delle versioni...) non hanno un
+# test attivo corrispondente e restano "non testato".
+PT_COLLEGAMENTO_PASSIVO = (
+    ("header", r"content-security-policy|\bcsp\b", "xss"),
+    ("cookie", r"senza httponly", "xss"),
+)
+# Nome leggibile delle classi del PT, per le note dell'esito
+PT_NOME_CLASSE = {"sqli": "SQL injection", "xss": "XSS riflesso", "cmdi": "command injection",
+                  "ssti": "SSTI", "lfi": "path traversal / LFI", "redirect": "open redirect",
+                  "ssrf": "SSRF", "exposed": "file sensibili esposti"}
+
+
+# ============================================================================
+# Analisi INTERNA (apocalypse inspect, pacchetto interno/) - stesso modello:
+# rischio = impatto x probabilità. Ogni regola è (categoria OWASP, impatto, probabilità,
+# motivazione), come quelle del VAPT web. La probabilità tiene conto di quanto il problema
+# è raggiungibile da fuori: un database aperto sulla rete è più probabile da sfruttare di
+# uno in ascolto solo su localhost.
+# ============================================================================
+
+# --- Variabili d'ambiente delle credenziali (MAI argomenti sulla riga di comando) ---
+INT_ENV_SSH_HOST = "APOCALYPSE_SSH_HOST"
+INT_ENV_SSH_USER = "APOCALYPSE_SSH_USER"
+INT_ENV_SSH_KEY = "APOCALYPSE_SSH_KEY"
+INT_ENV_SUDO_PASSWORD = "APOCALYPSE_SUDO_PASSWORD"
+INT_ENV_DB_USER = "APOCALYPSE_DB_USER"
+INT_ENV_DB_PASSWORD = "APOCALYPSE_DB_PASSWORD"
+INT_ENV_DB_HOST = "APOCALYPSE_DB_HOST"          # default: 127.0.0.1
+INT_ENV_DB_PORT = "APOCALYPSE_DB_PORT"          # default: porta standard del motore
+INT_TIMEOUT = 120                               # secondi per comando (Bandit può essere lento)
+
+# --- Processi e servizi ---
+# Processi che sono database o cache: non dovrebbero ascoltare su tutte le interfacce
+INT_PROCESSI_DATABASE = ("mysqld", "mariadbd", "postgres", "postmaster", "redis-server",
+                         "mongod", "memcached", "elasticsearch")
+INT_DB_TUTTE_INTERFACCE = ("A05", 4, 4, "Database o cache in ascolto su tutte le interfacce di rete: è raggiungibile da chiunque arrivi alla macchina, non solo dall'applicazione. Va limitato a localhost o alla rete interna, e filtrato dal firewall.")
+# Runtime delle applicazioni: girare come root dà all'attaccante la macchina intera al primo RCE.
+# (nginx, apache e php-fpm hanno un master root per progetto: i loro worker no, quindi non sono qui.)
+INT_RUNTIME_APPLICAZIONE = ("node", "python", "python3", "gunicorn", "uwsgi", "java", "ruby",
+                            "puma", "dotnet", "php", "uvicorn", "flask")
+INT_APP_COME_ROOT = ("A05", 4, 3, "Il processo dell'applicazione gira come root: una qualunque vulnerabilità di esecuzione di codice (RCE, deserializzazione, SSTI) dà subito il controllo completo della macchina. Usare un utente dedicato senza privilegi.")
+# Servizi che di norma non servono su un server web e allargano la superficie d'attacco
+INT_SERVIZI_SUPERFLUI = {
+    "telnet": ("A05", 4, 3, "Telnet trasmette credenziali in chiaro: va disattivato e sostituito da SSH."),
+    "inetd": ("A05", 3, 2, "Super-server inetd/xinetd attivo: espone servizi legacy spesso insicuri."),
+    "xinetd": ("A05", 3, 2, "Super-server inetd/xinetd attivo: espone servizi legacy spesso insicuri."),
+    "vsftpd": ("A02", 3, 3, "Server FTP attivo: FTP senza TLS trasmette credenziali in chiaro."),
+    "proftpd": ("A02", 3, 3, "Server FTP attivo: FTP senza TLS trasmette credenziali in chiaro."),
+    "rsh": ("A07", 4, 3, "Servizi r* (rsh/rlogin) attivi: autenticazione debole e traffico in chiaro."),
+    "rpcbind": ("A05", 2, 2, "rpcbind attivo: necessario solo per NFS; altrimenti va disattivato."),
+    "snmpd": ("A05", 3, 2, "SNMP attivo: con community di default rivela molte informazioni sulla macchina."),
+    "avahi-daemon": ("A05", 1, 2, "Avahi (mDNS) attivo: inutile su un server, annuncia la macchina in rete."),
+    "cups": ("A05", 2, 2, "Servizio di stampa CUPS attivo: inutile su un server web."),
+    "smbd": ("A05", 3, 2, "Condivisione Samba attiva: verificare che serva davvero su questo server."),
+}
+
+# --- Database ---
+INT_DB_SENZA_PASSWORD = ("A07", 5, 4, "Utente del database senza password: chiunque raggiunga il database (anche un'applicazione compromessa sulla stessa macchina) vi accede con quell'utente.")
+INT_DB_UTENTE_ANONIMO = ("A07", 4, 3, "Utente anonimo (nome vuoto) nel database: consente connessioni senza un'identità precisa. Va rimosso.")
+INT_DB_ROOT_REMOTO = ("A07", 4, 3, "L'amministratore del database può collegarsi da qualunque host ('%'): una password indovinata o rubata vale da tutta la rete.")
+INT_DB_PRIVILEGI_LARGHI = ("A01", 4, 3, "Utente non amministrativo con privilegi globali ampi (su *.*): se le credenziali dell'applicazione vengono rubate, l'attaccante legge o modifica tutti i database, non solo quello dell'app. Applicare il minimo privilegio.")
+INT_DB_SUPERUSER = ("A01", 4, 3, "Ruolo PostgreSQL con SUPERUSER (o BYPASSRLS) diverso da postgres: ha ogni permesso, compresa l'esecuzione di comandi sul sistema (COPY ... PROGRAM). Va ridotto al minimo indispensabile.")
+INT_DB_IN_RETE = ("A05", 3, 3, "Il database accetta connessioni da tutte le interfacce (bind-address / listen_addresses): se non serve, limitarlo a localhost.")
+INT_DB_SENZA_SSL = ("A02", 3, 2, "Il database accetta connessioni di rete senza cifratura (SSL/TLS disattivato o non obbligatorio): credenziali e dati viaggiano in chiaro.")
+INT_DB_LOCAL_INFILE = ("A05", 3, 2, "local_infile attivo: con una SQL injection permette di leggere file della macchina del client.")
+INT_DB_HBA_TRUST = ("A07", 5, 4, "pg_hba.conf con metodo 'trust': le connessioni che corrispondono alla regola entrano SENZA password.")
+INT_DB_HBA_PASSWORD = ("A02", 3, 2, "pg_hba.conf con metodo 'password': la password viaggia in chiaro. Usare scram-sha-256.")
+INT_DB_MD5 = ("A02", 2, 2, "password_encryption = md5: algoritmo debole per le password del database. Usare scram-sha-256.")
+# Utenti amministrativi o di sistema per cui i privilegi globali sono attesi (MySQL/MariaDB)
+INT_DB_UTENTI_SISTEMA = ("root", "mysql.sys", "mysql.session", "mysql.infoschema", "mariadb.sys",
+                         "debian-sys-maint", "rdsadmin")
+# Privilegi globali che bastano da soli a segnalare un utente non amministrativo
+INT_DB_PRIVILEGI_PERICOLOSI = ("SUPER", "FILE", "PROCESS", "SHUTDOWN", "CREATE USER", "GRANT OPTION",
+                               "RELOAD", "ALL PRIVILEGES")
+INT_DB_PRIVILEGI_SOGLIA = 10    # oltre questo numero di privilegi globali è "ALL su *.*" di fatto
+
+# --- Analisi statica del codice (Bandit, Semgrep) ---
+# impatto <- gravità, probabilità <- confidenza dello strumento
+INT_CODICE_IMPATTO = {"HIGH": 4, "MEDIUM": 3, "LOW": 2, "ERROR": 4, "WARNING": 3, "INFO": 2}
+INT_CODICE_PROBABILITA = {"HIGH": 4, "MEDIUM": 3, "LOW": 2}
+INT_CODICE_PROBABILITA_DEFAULT = 3
+# Regole di Bandit che riguardano segreti nel codice: il loro testo contiene il valore trovato,
+# quindi viene SEMPRE sostituito con una descrizione fissa
+INT_BANDIT_SEGRETI = ("B105", "B106", "B107")
+INT_CODICE_SEGRETO = ("A07", 4, 3, "Credenziale scritta nel codice sorgente: chi legge il codice (repository, backup, file esposti) la ottiene. Spostarla in una variabile d'ambiente o in un gestore di segreti.")
+INT_CODICE_MAX_POSIZIONI = 5   # posizioni (file:riga) mostrate per ogni regola
+# Mappatura grezza delle regole di Bandit sulle categorie OWASP (prefisso dell'id -> categoria)
+INT_BANDIT_OWASP = {"B1": "A05", "B2": "A05", "B3": "A08", "B4": "A06", "B5": "A02",
+                    "B6": "A03", "B7": "A03"}
+
+# --- File sensibili e permessi ---
+INT_FILE_LEGGIBILE = ("A05", 4, 3, "File sensibile leggibile da tutti gli utenti della macchina: può contenere credenziali o chiavi. Restringere i permessi (es. 600 o 640) all'utente dell'applicazione.")
+INT_FILE_SENSIBILE_PRESENTE = ("A05", 2, 2, "File sensibile dentro la cartella del codice: se la cartella è servita dal web server, potrebbe essere scaricabile. Spostarlo fuori dalla document root.")
+# File di configurazione e log di cui si controllano SOLO i permessi (mai il contenuto)
+INT_FILE_SISTEMA = ("/etc/mysql/debian.cnf", "/etc/mysql/my.cnf", "/root/.my.cnf",
+                    "/etc/nginx/nginx.conf", "/var/log/nginx", "/var/log/apache2",
+                    "/var/log/httpd", "/var/log/mysql", "/var/log/postgresql")
+INT_LOG_LEGGIBILE = ("A09", 2, 2, "Log leggibili da tutti gli utenti della macchina: contengono IP, URL (a volte con token) e dati delle richieste.")
+
+# --- Web server ---
+INT_WS_VERSIONE = ("A05", 1, 3, "Il web server dichiara la propria versione (server_tokens / ServerTokens): facilita la ricerca di exploit mirati.")
+INT_WS_TLS_VECCHIO = ("A02", 3, 3, "Il web server abilita versioni di TLS obsolete (TLSv1 / TLSv1.1 / SSLv3), vulnerabili ad attacchi noti.")
+INT_WS_HEADER = ("A05", 2, 3, "La configurazione del web server non imposta alcuni header di sicurezza: vanno aggiunti qui o dall'applicazione.")
+INT_WS_TRACE = ("A05", 2, 2, "TraceEnable attivo: il metodo TRACE può aiutare attacchi di Cross-Site Tracing.")
+INT_WS_SIGNATURE = ("A05", 1, 2, "ServerSignature attivo: le pagine di errore mostrano versione e nome del server.")
+INT_WS_HEADER_ATTESI = ("strict-transport-security", "x-content-type-options", "x-frame-options",
+                        "content-security-policy")
+
+# --- Pacchetti (CVE note via NVD, solo per i prodotti mappati in WEB_TECH_CPE) ---
+# pacchetto della distribuzione -> prodotto di WEB_TECH_CPE
+INT_PACCHETTI_PRODOTTO = {
+    "nginx": "nginx", "nginx-core": "nginx", "nginx-full": "nginx", "nginx-light": "nginx",
+    "nginx-extras": "nginx", "apache2": "apache", "apache2-bin": "apache", "httpd": "apache",
+    "openssl": "openssl", "libssl3": "openssl", "libssl1.1": "openssl", "php": "php",
+}
+INT_PACCHETTI_CHIAVE = ("nginx", "nginx-core", "apache2", "httpd", "openssl", "openssh-server",
+                        "mysql-server", "mariadb-server", "postgresql", "php", "php-fpm")
